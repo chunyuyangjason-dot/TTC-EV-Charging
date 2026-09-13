@@ -172,7 +172,7 @@
         </div>
         <div class="text-slate-400 font-mono text-xs flex items-center gap-2">
           <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-          時間單位：整點 (:00) 或 半點 (:30)
+          時間單位：以 10 分鐘為一單位
           <span class="hidden md:inline text-slate-500">| 固定比例上視圖</span>
         </div>
       </div>
@@ -344,21 +344,44 @@
       <form id="checkInForm" onsubmit="handleCheckInSubmit(event)" class="space-y-4">
         <input type="hidden" id="checkInSpotId">
 
-        <!-- Estimated End Time (in :00 or :30 increments) -->
-        <div>
-          <label class="block text-xs font-medium text-slate-300 mb-1">
+        <!-- Estimated End Time (Date, Hour & Minute in 10-min steps) -->
+        <div class="space-y-2">
+          <label class="block text-xs font-medium text-slate-300">
             預計結束充電 (Check Out) 時間 <span class="text-rose-400">*</span>
-            <span class="text-slate-400 text-[11px] block">(以整點或 30 分為單位，讓下一個人精準掌握交換時間)</span>
           </label>
-          <div class="grid grid-cols-2 gap-2 mt-1.5">
+
+          <!-- Date Selector (Default today, cannot select past dates) -->
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[11px] text-slate-400 flex items-center gap-1">
+                <i class="fa-regular fa-calendar text-emerald-400"></i> 結束日期 (預設當天)
+              </span>
+              <span class="text-[10px] text-emerald-400/80">不可選擇過去日期</span>
+            </div>
+            <input type="date" id="checkInDate" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono-num cursor-pointer">
+          </div>
+
+          <!-- Hour & Minute Selector -->
+          <div class="grid grid-cols-2 gap-2 pt-1">
             <div>
-              <span class="text-[11px] text-slate-400 mb-1 block">預計日期</span>
-              <input type="date" id="checkInDate" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono-num">
+              <span class="text-[11px] text-slate-400 mb-1 block flex items-center gap-1">
+                <i class="fa-regular fa-clock text-emerald-400"></i> 結束小時
+              </span>
+              <select id="checkInHourSelect" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono-num">
+                <!-- 00 ~ 23 hrs -->
+              </select>
             </div>
             <div>
-              <span class="text-[11px] text-slate-400 mb-1 block">時段 (整點或 30 分)</span>
-              <select id="checkInTimeSelect" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono-num">
-                <!-- Dynamically generated half-hour options -->
+              <span class="text-[11px] text-slate-400 mb-1 block flex items-center gap-1">
+                <i class="fa-solid fa-stopwatch text-emerald-400"></i> 分鐘 (10分單位)
+              </span>
+              <select id="checkInMinuteSelect" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono-num">
+                <option value="00">00 分</option>
+                <option value="10">10 分</option>
+                <option value="20">20 分</option>
+                <option value="30">30 分</option>
+                <option value="40">40 分</option>
+                <option value="50">50 分</option>
               </select>
             </div>
           </div>
@@ -424,15 +447,46 @@
       <form id="queueForm" onsubmit="handleQueueSubmit(event)" class="space-y-4">
         <input type="hidden" id="queueSpotId">
 
-        <div>
-          <label class="block text-xs font-medium text-slate-300 mb-1">
-            預計接續充到幾點 (整點或 30 分)
+        <!-- Queue End Time (Date, Hour & Minute in 10-min steps) -->
+        <div class="space-y-2">
+          <label class="block text-xs font-medium text-slate-300">
+            預計接續充到幾點 <span class="text-amber-400">*</span>
           </label>
-          <div class="grid grid-cols-2 gap-2 mt-1">
-            <input type="date" id="queueEndDate" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono-num">
-            <select id="queueEndTimeSelect" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono-num">
-              <!-- Dynamically populated half-hour list -->
-            </select>
+
+          <!-- Date Selector (Default today, cannot select past dates) -->
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[11px] text-slate-400 flex items-center gap-1">
+                <i class="fa-regular fa-calendar text-amber-400"></i> 接續日期 (預設當天)
+              </span>
+              <span class="text-[10px] text-amber-400/80">不可選擇過去日期</span>
+            </div>
+            <input type="date" id="queueEndDate" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono-num cursor-pointer">
+          </div>
+
+          <!-- Hour & Minute Selector -->
+          <div class="grid grid-cols-2 gap-2 pt-1">
+            <div>
+              <span class="text-[11px] text-slate-400 mb-1 block flex items-center gap-1">
+                <i class="fa-regular fa-clock text-amber-400"></i> 結束小時
+              </span>
+              <select id="queueEndHourSelect" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono-num">
+                <!-- 00 ~ 23 hrs -->
+              </select>
+            </div>
+            <div>
+              <span class="text-[11px] text-slate-400 mb-1 block flex items-center gap-1">
+                <i class="fa-solid fa-stopwatch text-amber-400"></i> 分鐘 (10分單位)
+              </span>
+              <select id="queueEndMinuteSelect" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono-num">
+                <option value="00">00 分</option>
+                <option value="10">10 分</option>
+                <option value="20">20 分</option>
+                <option value="30">30 分</option>
+                <option value="40">40 分</option>
+                <option value="50">50 分</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -606,15 +660,29 @@
             <label class="block text-xs font-medium text-slate-300 mb-1">聯絡電話</label>
             <input type="text" id="adminEditUserPhone" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500">
           </div>
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-xs font-medium text-slate-300">預計結束日期</label>
+              <span class="text-[10px] text-amber-400/80">不可選過去日期</span>
+            </div>
+            <input type="date" id="adminEditDate" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono-num cursor-pointer">
+          </div>
           <div class="grid grid-cols-2 gap-2">
             <div>
-              <label class="block text-xs font-medium text-slate-300 mb-1">預計結束日期</label>
-              <input type="date" id="adminEditDate" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500">
+              <label class="block text-xs font-medium text-slate-300 mb-1">結束小時</label>
+              <select id="adminEditHour" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono-num">
+                <!-- 00 ~ 23 hrs -->
+              </select>
             </div>
             <div>
-              <label class="block text-xs font-medium text-slate-300 mb-1">預計時間 (:00/:30)</label>
-              <select id="adminEditTime" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500">
-                <!-- Half hour options -->
+              <label class="block text-xs font-medium text-slate-300 mb-1">分鐘 (10分單位)</label>
+              <select id="adminEditMinute" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono-num">
+                <option value="00">00 分</option>
+                <option value="10">10 分</option>
+                <option value="20">20 分</option>
+                <option value="30">30 分</option>
+                <option value="40">40 分</option>
+                <option value="50">50 分</option>
               </select>
             </div>
           </div>
@@ -874,51 +942,62 @@
     setInterval(updateClock, 1000);
     updateClock();
 
-    // --- Time Select Builder (00 & 30 steps only) ---
+    // --- Time Select Builder (Hour & 10-Min Increments) ---
     function renderTimeOptions() {
-      const selects = [
-        document.getElementById('checkInTimeSelect'),
-        document.getElementById('queueEndTimeSelect'),
-        document.getElementById('adminEditTime')
+      const hourSelects = [
+        document.getElementById('checkInHourSelect'),
+        document.getElementById('queueEndHourSelect'),
+        document.getElementById('adminEditHour')
       ];
 
-      const options = [];
-      for (let h = 7; h <= 23; h++) {
+      // Build 24 hours options
+      const hourOptions = [];
+      for (let h = 0; h <= 23; h++) {
         const hh = String(h).padStart(2, '0');
-        options.push(`${hh}:00`);
-        options.push(`${hh}:30`);
-      }
-      for (let h = 0; h <= 6; h++) {
-        const hh = String(h).padStart(2, '0');
-        options.push(`${hh}:00`);
-        options.push(`${hh}:30`);
+        hourOptions.push({ value: hh, text: `${hh} 點 (${hh}:00)` });
       }
 
-      selects.forEach(sel => {
+      hourSelects.forEach(sel => {
         if (!sel) return;
         sel.innerHTML = '';
-        options.forEach(t => {
+        hourOptions.forEach(item => {
           const opt = document.createElement('option');
-          opt.value = t;
-          opt.textContent = `${t}`;
+          opt.value = item.value;
+          opt.textContent = item.text;
           sel.appendChild(opt);
         });
       });
 
-      // Set default dates to today
+      // Default date: Today & Min Date: Today (Disallows past dates)
       const today = new Date().toISOString().split('T')[0];
       const checkInDateEl = document.getElementById('checkInDate');
       const queueEndDateEl = document.getElementById('queueEndDate');
       const adminEditDateEl = document.getElementById('adminEditDate');
-      if (checkInDateEl) checkInDateEl.value = today;
-      if (queueEndDateEl) queueEndDateEl.value = today;
-      if (adminEditDateEl) adminEditDateEl.value = today;
 
-      // Select logical next +2 hour
-      const nextH = (new Date().getHours() + 2) % 24;
-      const defTime = `${String(nextH).padStart(2, '0')}:00`;
-      if (document.getElementById('checkInTimeSelect')) document.getElementById('checkInTimeSelect').value = defTime;
-      if (document.getElementById('queueEndTimeSelect')) document.getElementById('queueEndTimeSelect').value = defTime;
+      if (checkInDateEl) {
+        checkInDateEl.value = today;
+        checkInDateEl.min = today; // Disallows selecting any day before today
+      }
+      if (queueEndDateEl) {
+        queueEndDateEl.value = today;
+        queueEndDateEl.min = today; // Disallows selecting any day before today
+      }
+      if (adminEditDateEl) {
+        adminEditDateEl.value = today;
+        adminEditDateEl.min = today; // Disallows selecting any day before today
+      }
+
+      // Smart Default: Current Hour + 2 hours, nearest 10-min
+      const now = new Date();
+      const defHour = String((now.getHours() + 2) % 24).padStart(2, '0');
+      const curMin = now.getMinutes();
+      const defMinStep = Math.ceil(curMin / 10) * 10;
+      const defMinStr = String(defMinStep >= 60 ? 0 : defMinStep).padStart(2, '0');
+
+      if (document.getElementById('checkInHourSelect')) document.getElementById('checkInHourSelect').value = defHour;
+      if (document.getElementById('checkInMinuteSelect')) document.getElementById('checkInMinuteSelect').value = defMinStr;
+      if (document.getElementById('queueEndHourSelect')) document.getElementById('queueEndHourSelect').value = defHour;
+      if (document.getElementById('queueEndMinuteSelect')) document.getElementById('queueEndMinuteSelect').value = defMinStr;
     }
 
     // --- User Management ---
@@ -1429,12 +1508,18 @@
       document.getElementById('checkInSpotName').textContent = spotId;
 
       const now = new Date();
+      const today = now.toISOString().split('T')[0];
       const checkInDateEl = document.getElementById('checkInDate');
-      checkInDateEl.value = now.toISOString().split('T')[0];
+      checkInDateEl.value = today;
+      checkInDateEl.min = today; // Disallows selecting any day before today
 
-      // Next +2 hour default
-      const defaultHour = (now.getHours() + 2) % 24;
-      document.getElementById('checkInTimeSelect').value = `${String(defaultHour).padStart(2,'0')}:00`;
+      // Smart calculation: 2 hours from now rounded to nearest 10 min
+      const targetTime = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+      const targetH = String(targetTime.getHours()).padStart(2, '0');
+      const targetM = String(Math.ceil(targetTime.getMinutes() / 10) * 10 >= 60 ? 0 : Math.ceil(targetTime.getMinutes() / 10) * 10).padStart(2, '0');
+
+      if (document.getElementById('checkInHourSelect')) document.getElementById('checkInHourSelect').value = targetH;
+      if (document.getElementById('checkInMinuteSelect')) document.getElementById('checkInMinuteSelect').value = targetM;
 
       openModal('checkInModal');
     }
@@ -1442,16 +1527,22 @@
     function handleCheckInSubmit(e) {
       e.preventDefault();
       const spotId = document.getElementById('checkInSpotId').value;
-      const date = document.getElementById('checkInDate').value;
-      const time = document.getElementById('checkInTimeSelect').value;
+      const date = document.getElementById('checkInDate').value || new Date().toISOString().split('T')[0];
+      const hour = document.getElementById('checkInHourSelect').value;
+      const minute = document.getElementById('checkInMinuteSelect').value;
       const note = document.getElementById('checkInNote').value.trim();
 
-      if (!date || !time) {
-        alert('請選擇預計結束充電的日期與時間');
+      const timeStr = `${hour}:${minute}`;
+      const fullEndTime = `${date} ${timeStr}`;
+
+      // Validation: Selected date & time cannot be in the past
+      const selectedDt = new Date(fullEndTime.replace(/-/g, '/'));
+      const now = new Date();
+      if (selectedDt <= now) {
+        alert(`預計結束時間 (${fullEndTime}) 不能早於或等於現在時間！\n請選擇未來的時間。`);
         return;
       }
 
-      const fullEndTime = `${date} ${time}`;
       const nowStr = new Date().toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' }) + ' ' + 
                      new Date().toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
@@ -1529,7 +1620,27 @@
       document.getElementById('queueSpotEndTime').textContent = `預計至: ${state.expectedEndTime || '未定'}`;
 
       const today = new Date().toISOString().split('T')[0];
-      document.getElementById('queueEndDate').value = today;
+      const queueEndDateEl = document.getElementById('queueEndDate');
+      queueEndDateEl.value = today;
+      queueEndDateEl.min = today; // Disallows selecting any day before today
+
+      // Smart default for queue: 2 hours after current occupant, or 2 hours from now
+      let baseTime = new Date();
+      if (state.expectedEndTime && state.expectedEndTime.includes(':')) {
+        const timePart = state.expectedEndTime.split(' ')[1] || state.expectedEndTime;
+        const [h, m] = timePart.split(':');
+        const candidate = new Date();
+        candidate.setHours(parseInt(h) + 2, parseInt(m), 0, 0);
+        if (!isNaN(candidate.getTime())) baseTime = candidate;
+      } else {
+        baseTime = new Date(baseTime.getTime() + 2 * 60 * 60 * 1000);
+      }
+
+      const targetH = String(baseTime.getHours()).padStart(2, '0');
+      const targetM = String(Math.ceil(baseTime.getMinutes() / 10) * 10 >= 60 ? 0 : Math.ceil(baseTime.getMinutes() / 10) * 10).padStart(2, '0');
+
+      if (document.getElementById('queueEndHourSelect')) document.getElementById('queueEndHourSelect').value = targetH;
+      if (document.getElementById('queueEndMinuteSelect')) document.getElementById('queueEndMinuteSelect').value = targetM;
 
       openModal('queueModal');
     }
@@ -1537,12 +1648,19 @@
     function handleQueueSubmit(e) {
       e.preventDefault();
       const spotId = document.getElementById('queueSpotId').value;
-      const date = document.getElementById('queueEndDate').value;
-      const time = document.getElementById('queueEndTimeSelect').value;
+      const date = document.getElementById('queueEndDate').value || new Date().toISOString().split('T')[0];
+      const hour = document.getElementById('queueEndHourSelect').value;
+      const minute = document.getElementById('queueEndMinuteSelect').value;
       const note = document.getElementById('queueNote').value.trim();
 
-      if (!date || !time) {
-        alert('請填寫預計交換結束時間');
+      const timeStr = `${hour}:${minute}`;
+      const fullEndTime = `${date} ${timeStr}`;
+
+      // Validation: Selected date & time cannot be in the past
+      const selectedDt = new Date(fullEndTime.replace(/-/g, '/'));
+      const now = new Date();
+      if (selectedDt <= now) {
+        alert(`預計接續時間 (${fullEndTime}) 不能早於或等於現在時間！\n請選擇未來的時間。`);
         return;
       }
 
@@ -1557,7 +1675,7 @@
 
       state.queue.push({
         user: currentUser,
-        expectedEndTime: `${date} ${time}`,
+        expectedEndTime: fullEndTime,
         note: note,
         createdAt: new Date().toLocaleTimeString('zh-TW', { hour12: false })
       });
@@ -1611,10 +1729,22 @@
       document.getElementById('adminEditUserName').value = state.currentUser ? state.currentUser.name : '';
       document.getElementById('adminEditUserPhone').value = state.currentUser ? state.currentUser.phone : '';
       
-      if (state.expectedEndTime) {
-        const parts = state.expectedEndTime.split(' ');
-        if (parts[0]) document.getElementById('adminEditDate').value = parts[0];
-        if (parts[1]) document.getElementById('adminEditTime').value = parts[1];
+      const today = new Date().toISOString().split('T')[0];
+      const adminEditDateEl = document.getElementById('adminEditDate');
+      adminEditDateEl.value = today;
+      adminEditDateEl.min = today; // Disallows selecting any day before today
+
+      if (state.expectedEndTime && state.expectedEndTime.includes(':')) {
+        const timePart = state.expectedEndTime.split(' ')[1] || state.expectedEndTime;
+        const [h, m] = timePart.split(':');
+        if (document.getElementById('adminEditHour')) document.getElementById('adminEditHour').value = String(h).padStart(2, '0');
+        const mRound = Math.floor(parseInt(m) / 10) * 10;
+        if (document.getElementById('adminEditMinute')) document.getElementById('adminEditMinute').value = String(mRound >= 60 ? 0 : mRound).padStart(2, '0');
+      } else {
+        const now = new Date();
+        const defH = String((now.getHours() + 2) % 24).padStart(2, '0');
+        if (document.getElementById('adminEditHour')) document.getElementById('adminEditHour').value = defH;
+        if (document.getElementById('adminEditMinute')) document.getElementById('adminEditMinute').value = '00';
       }
       document.getElementById('adminEditNote').value = state.note || '';
 
@@ -1627,16 +1757,29 @@
       const status = document.getElementById('adminSpotStatus').value;
       const name = document.getElementById('adminEditUserName').value.trim();
       const phone = document.getElementById('adminEditUserPhone').value.trim();
-      const date = document.getElementById('adminEditDate').value;
-      const time = document.getElementById('adminEditTime').value;
+      const date = document.getElementById('adminEditDate').value || new Date().toISOString().split('T')[0];
+      const hour = document.getElementById('adminEditHour').value;
+      const minute = document.getElementById('adminEditMinute').value;
       const note = document.getElementById('adminEditNote').value.trim();
+
+      const timeStr = `${hour}:${minute}`;
+      const fullEndTime = `${date} ${timeStr}`;
+
+      if (status === 'charging') {
+        const selectedDt = new Date(fullEndTime.replace(/-/g, '/'));
+        const now = new Date();
+        if (selectedDt <= now) {
+          alert(`預計結束時間 (${fullEndTime}) 不能早於或等於現在時間！\n請選擇未來的時間。`);
+          return;
+        }
+      }
 
       const state = spotsState[spotId] || { queue: [] };
       state.status = status;
 
       if (status === 'charging') {
         state.currentUser = { name: name || '管理員指定', phone: phone || '未留' };
-        state.expectedEndTime = date && time ? `${date} ${time}` : '';
+        state.expectedEndTime = fullEndTime;
         state.note = note;
       } else if (status === 'free') {
         state.currentUser = null;
