@@ -1,0 +1,2091 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>電動車智慧充電車位管理系統 | EV Charging Hub</title>
+  <!-- Tailwind CSS & FontAwesome & QRCode.js -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- PeerJS WebRTC Direct Device Sync (Zero Setup, No Server Needed) -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
+    body {
+      font-family: 'Noto Sans TC', system-ui, -apple-system, sans-serif;
+    }
+    .font-mono-num {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .parking-slot {
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      width: 140px;
+      min-width: 140px;
+      max-width: 140px;
+      height: 112px;
+      flex-shrink: 0;
+    }
+    .parking-slot:hover {
+      transform: translateY(-3px) scale(1.02);
+      box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.25);
+    }
+    .map-fixed-board {
+      min-width: 960px;
+      width: 960px;
+    }
+    @keyframes pulse-green {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+      50% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+    }
+    .charging-pulse {
+      animation: pulse-green 2s infinite;
+    }
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #1e293b;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen antialiased flex flex-col">
+
+  <!-- Header / Navigation -->
+  <header class="bg-slate-800/90 border-b border-slate-700/80 sticky top-0 z-40 backdrop-blur-md shadow-lg">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20 text-white font-bold text-xl">
+          <i class="fa-solid fa-bolt"></i>
+        </div>
+        <div>
+          <h1 class="text-base sm:text-lg font-bold tracking-tight text-white flex items-center gap-2">
+            EV 智慧充電管理系統
+            <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">即時看板</span>
+          </h1>
+          <p class="text-xs text-slate-400 hidden sm:block">LY1 B1 (9樁) / LY1 B2 (4樁) / LY3 B1 (6樁) 交換排隊平台</p>
+        </div>
+      </div>
+
+      <!-- Action items in header -->
+      <div class="flex items-center space-x-2 sm:space-x-3">
+        <!-- Current Time Indicator -->
+        <div class="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/80 border border-slate-700 text-xs font-mono-num text-slate-300">
+          <i class="fa-regular fa-clock text-emerald-400"></i>
+          <span id="headerClock">--:--:--</span>
+        </div>
+
+        <!-- Real-time Sync Status Pill -->
+        <div id="syncStatusBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-850 border border-slate-700 text-xs text-slate-400">
+          <span id="syncStatusDot" class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+          <span id="syncStatusText" class="hidden sm:inline">連接中...</span>
+        </div>
+
+        <!-- QR Code Trigger -->
+        <button onclick="openModal('qrModal')" class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs sm:text-sm font-medium flex items-center gap-1.5 transition">
+          <i class="fa-solid fa-qrcode text-emerald-400"></i>
+          <span class="hidden sm:inline">網頁 QR Code</span>
+        </button>
+
+        <!-- User Selector / Quick User Profile -->
+        <button onclick="openModal('userSelectModal')" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-medium flex items-center gap-1.5 shadow-md shadow-emerald-600/30 transition">
+          <i class="fa-solid fa-user-check"></i>
+          <span id="currentUserLabel">選擇車主身份</span>
+        </button>
+
+        <!-- Admin Mode Switch -->
+        <button onclick="toggleAdminPrompt()" id="adminBtn" class="px-3 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 text-xs sm:text-sm font-medium flex items-center gap-1.5 transition">
+          <i class="fa-solid fa-shield-halved"></i>
+          <span id="adminBtnText">管理員登入</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Notification Banner (Admin active, etc.) -->
+  <div id="adminBanner" class="hidden bg-gradient-to-r from-amber-900/90 via-amber-800/90 to-amber-900/90 border-b border-amber-600/50 px-4 py-2 text-center text-xs text-amber-200 flex flex-wrap items-center justify-center gap-3">
+    <span><i class="fa-solid fa-triangle-exclamation mr-1.5"></i> 管理員模式已啟用：您可自由編輯車位、強制退位、修改預計時間，以及批量新增/管理車主名單。</span>
+    <div class="flex items-center gap-2">
+      <button onclick="openModal('adminUserManageModal')" class="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-900 rounded-md font-bold text-xs transition flex items-center gap-1 shadow-sm">
+        <i class="fa-solid fa-users-gear"></i> 管理/建立車主
+      </button>
+      <button onclick="exitAdmin()" class="underline text-white font-semibold hover:text-amber-100 ml-2">退出管理模式</button>
+    </div>
+  </div>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full flex flex-col gap-6">
+
+    <!-- Top Status Bar & Floor Tabs -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-800/60 p-4 rounded-2xl border border-slate-700/70 shadow-sm">
+      
+      <!-- Floor Switch Buttons -->
+      <div class="flex items-center gap-2 p-1.5 bg-slate-900/80 rounded-xl border border-slate-700 w-fit">
+        <button onclick="switchFloor('LY1-B1')" id="tab-LY1-B1" class="floor-tab px-4 py-2 rounded-lg text-sm font-bold transition flex items-center gap-2 bg-emerald-600 text-white shadow-md">
+          <i class="fa-solid fa-square-parking"></i>
+          LY1 B1 <span class="text-xs px-1.5 py-0.5 rounded-full bg-white/20 font-normal">9 樁</span>
+        </button>
+        <button onclick="switchFloor('LY1-B2')" id="tab-LY1-B2" class="floor-tab px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 text-slate-400 hover:text-white">
+          <i class="fa-solid fa-square-parking"></i>
+          LY1 B2 <span class="text-xs px-1.5 py-0.5 rounded-full bg-slate-800 font-normal">4 樁</span>
+        </button>
+        <button onclick="switchFloor('LY3-B1')" id="tab-LY3-B1" class="floor-tab px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 text-slate-400 hover:text-white">
+          <i class="fa-solid fa-square-parking"></i>
+          LY3 B1 <span class="text-xs px-1.5 py-0.5 rounded-full bg-slate-800 font-normal">6 樁</span>
+        </button>
+      </div>
+
+      <!-- Quick Legend & Statistics -->
+      <div class="flex flex-wrap items-center gap-3 sm:gap-4 text-xs sm:text-sm">
+        <div class="flex items-center gap-2 bg-slate-900/60 px-3 py-1.5 rounded-lg border border-slate-700/60">
+          <span class="w-3 h-3 rounded-md bg-emerald-500 shadow-sm shadow-emerald-500/50"></span>
+          <span class="text-slate-300">空閒可充: <strong id="statFree" class="text-emerald-400 font-mono-num font-bold">0</strong></span>
+        </div>
+        <div class="flex items-center gap-2 bg-slate-900/60 px-3 py-1.5 rounded-lg border border-slate-700/60">
+          <span class="w-3 h-3 rounded-md bg-cyan-500 shadow-sm shadow-cyan-500/50"></span>
+          <span class="text-slate-300">充電中: <strong id="statBusy" class="text-cyan-400 font-mono-num font-bold">0</strong></span>
+        </div>
+        <div class="flex items-center gap-2 bg-slate-900/60 px-3 py-1.5 rounded-lg border border-slate-700/60">
+          <span class="w-3 h-3 rounded-md bg-amber-500 shadow-sm shadow-amber-500/50"></span>
+          <span class="text-slate-300">有人排隊: <strong id="statQueued" class="text-amber-400 font-mono-num font-bold">0</strong></span>
+        </div>
+        <div class="flex items-center gap-2 bg-slate-900/60 px-3 py-1.5 rounded-lg border border-slate-700/60">
+          <span class="w-3 h-3 rounded-md bg-rose-500 shadow-sm shadow-rose-500/50"></span>
+          <span class="text-slate-300">已逾期: <strong id="statOverdue" class="text-rose-400 font-mono-num font-bold">0</strong></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Map Canvas & Top View Diagram Area (Faithful to the user's sketch) -->
+    <div class="relative bg-gradient-to-b from-slate-800 to-slate-900 p-4 sm:p-8 rounded-3xl border border-slate-700 shadow-2xl overflow-hidden min-h-[500px]">
+      
+      <!-- Top notice & quick instruction -->
+      <div class="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-700/60 text-xs sm:text-sm text-slate-400">
+        <div class="flex items-center gap-2">
+          <i class="fa-solid fa-map-location-dot text-emerald-400 text-base"></i>
+          <span>依上視圖平面配置：<strong>點選任一車位卡片</strong>進行 Check-In、排隊預約或到場交換 Check-Out</span>
+        </div>
+        <div class="text-slate-400 font-mono text-xs flex items-center gap-2">
+          <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+          時間單位：整點 (:00) 或 半點 (:30)
+          <span class="hidden md:inline text-slate-500">| 固定比例上視圖</span>
+        </div>
+      </div>
+
+      <!-- Scroll wrapper to guarantee layout NEVER breaks on mobile screens -->
+      <div class="relative z-10 overflow-x-auto pb-4 pt-2">
+        <div class="map-fixed-board relative min-h-[460px] mx-auto flex flex-col justify-between p-4 rounded-2xl bg-slate-950/40 border border-slate-700/50">
+          
+          <!-- Floor Architecture Watermark in Center (Fixed inside map) -->
+          <div class="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
+            <h2 id="mapWatermark" class="text-8xl md:text-[140px] font-black text-slate-700/20 tracking-widest">
+              LY1 B1
+            </h2>
+          </div>
+
+          <!-- Interactive Floor Layout Container (Structure rendered dynamically) -->
+          <div id="floorContainer" class="relative z-10 w-full h-full min-h-[420px] flex flex-col justify-between">
+            <!-- Injected via JavaScript based on active floor -->
+          </div>
+
+        </div>
+      </div>
+      <p class="text-center text-[11px] text-slate-500 mt-1 md:hidden">
+        <i class="fa-solid fa-arrows-left-right mr-1"></i> 手機可左右滑動查看完整停車場上視圖
+      </p>
+    </div>
+
+    <!-- Real-time Queue & Next Exchange Table -->
+    <div class="bg-slate-800/80 rounded-2xl border border-slate-700/80 p-5 shadow-lg">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+        <div>
+          <h3 class="text-base font-bold text-white flex items-center gap-2">
+            <i class="fa-solid fa-arrows-spin text-teal-400"></i>
+            即時充電與預計交換時段一覽
+          </h3>
+          <p class="text-xs text-slate-400">展示各車位當前充電使用者、預計結束時間及下一位等待排隊者</p>
+        </div>
+        <div class="text-xs text-slate-400 bg-slate-900/80 px-3 py-1.5 rounded-lg border border-slate-700">
+          💡 下一位排隊者可在前一人完成或預計時間到達時，於車位卡片直接點選<strong>「交換接續」</strong>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs sm:text-sm text-slate-300">
+          <thead class="bg-slate-900/80 text-slate-400 uppercase text-xs tracking-wider border-b border-slate-700">
+            <tr>
+              <th class="py-3 px-4">車位編號</th>
+              <th class="py-3 px-4">狀態</th>
+              <th class="py-3 px-4">當前充電者</th>
+              <th class="py-3 px-4">聯絡電話</th>
+              <th class="py-3 px-4">預計結束時間</th>
+              <th class="py-3 px-4">下一位排隊者 (候位)</th>
+              <th class="py-3 px-4 text-center">快捷操作</th>
+            </tr>
+          </thead>
+          <tbody id="queueTableBody" class="divide-y divide-slate-700/50">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="bg-slate-900 border-t border-slate-800 py-4 text-center text-xs text-slate-500">
+    <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+      <p>© 2026 EV Smart Charging Hub · 停車場充電預約與車位交換系統</p>
+      <p class="text-slate-400">已支援本機資料即時儲存 (Local Storage)</p>
+    </div>
+  </footer>
+
+  <!-- ==================== MODALS ==================== -->
+
+  <!-- 1. USER REGISTRATION & SWITCH MODAL -->
+  <div id="userSelectModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
+      <button onclick="closeModal('userSelectModal')" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+        <i class="fa-solid fa-xmark text-lg"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-5">
+        <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-address-card"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-white text-base">建立 / 選擇使用者資料</h3>
+          <p class="text-xs text-slate-400">建立一次後即保存在資料庫，之後可直接選取</p>
+        </div>
+      </div>
+
+      <!-- Existing Users Quick Dropdown -->
+      <div class="mb-5">
+        <label class="block text-xs font-medium text-slate-300 mb-1.5">從已儲存資料庫中快速選擇：</label>
+        <div class="flex gap-2">
+          <select id="userSelectDropdown" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500">
+            <!-- Dynamically populated -->
+          </select>
+          <button onclick="confirmSelectUser()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition whitespace-nowrap">
+            選定此身分
+          </button>
+        </div>
+      </div>
+
+      <div class="relative my-4">
+        <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-700"></div></div>
+        <div class="relative flex justify-center text-xs"><span class="bg-slate-800 px-2 text-slate-400">或 註冊新車主資料</span></div>
+      </div>
+
+      <!-- Add New User Form -->
+      <form id="newUserForm" onsubmit="handleCreateUser(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-300 mb-1">車主姓名 / 稱呼 <span class="text-rose-400">*</span></label>
+          <div class="relative">
+            <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 text-xs"><i class="fa-solid fa-user"></i></span>
+            <input type="text" id="newUserName" required placeholder="例如：張小明 / Alex" class="w-full bg-slate-900 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500">
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-300 mb-1">聯絡電話 / 手機 / 分機 <span class="text-rose-400">*</span></label>
+          <div class="relative">
+            <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 text-xs"><i class="fa-solid fa-phone"></i></span>
+            <input type="tel" id="newUserPhone" required placeholder="例如：0912-345-678 或 #8820" class="w-full bg-slate-900 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono-num">
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-300 mb-1">車牌號碼 (選填)</label>
+          <div class="relative">
+            <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 text-xs"><i class="fa-solid fa-car"></i></span>
+            <input type="text" id="newUserPlate" placeholder="例如：EAA-8888" class="w-full bg-slate-900 border border-slate-700 rounded-lg pl-9 pr-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 uppercase font-mono-num">
+          </div>
+        </div>
+        <button type="submit" class="w-full py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-sm rounded-lg shadow-lg shadow-emerald-600/30 transition">
+          建立並設為當前操作身分
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 2. CHECK IN MODAL -->
+  <div id="checkInModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
+      <button onclick="closeModal('checkInModal')" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+        <i class="fa-solid fa-xmark text-lg"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-plug-circle-bolt"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-white text-base">充電車位 Check In</h3>
+          <p class="text-xs text-slate-400">目前車位：<span id="checkInSpotName" class="font-bold text-emerald-400 font-mono-num"></span></p>
+        </div>
+      </div>
+
+      <!-- Active User Summary -->
+      <div class="bg-slate-900/90 p-3.5 rounded-xl border border-slate-700/80 mb-4 flex items-center justify-between">
+        <div>
+          <span class="text-xs text-slate-400 block">目前操作車主</span>
+          <span id="modalCurrentUserName" class="text-sm font-bold text-white">未選擇</span>
+          <span id="modalCurrentUserPhone" class="text-xs text-slate-400 block font-mono-num"></span>
+        </div>
+        <button onclick="openModal('userSelectModal')" class="text-xs text-emerald-400 hover:text-emerald-300 underline">
+          更換車主
+        </button>
+      </div>
+
+      <form id="checkInForm" onsubmit="handleCheckInSubmit(event)" class="space-y-4">
+        <input type="hidden" id="checkInSpotId">
+
+        <!-- Estimated End Time (in :00 or :30 increments) -->
+        <div>
+          <label class="block text-xs font-medium text-slate-300 mb-1">
+            預計結束充電 (Check Out) 時間 <span class="text-rose-400">*</span>
+            <span class="text-slate-400 text-[11px] block">(以整點或 30 分為單位，讓下一個人精準掌握交換時間)</span>
+          </label>
+          <div class="grid grid-cols-2 gap-2 mt-1.5">
+            <div>
+              <span class="text-[11px] text-slate-400 mb-1 block">預計日期</span>
+              <input type="date" id="checkInDate" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono-num">
+            </div>
+            <div>
+              <span class="text-[11px] text-slate-400 mb-1 block">時段 (整點或 30 分)</span>
+              <select id="checkInTimeSelect" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono-num">
+                <!-- Dynamically generated half-hour options -->
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-300 mb-1">備註說明 (選填)</label>
+          <input type="text" id="checkInNote" placeholder="例如：充到 80% 即移走，有急需可來電" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500">
+        </div>
+
+        <div class="pt-2">
+          <button type="submit" class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2">
+            <i class="fa-solid fa-circle-check"></i>
+            確認 Check In 開始充電
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 3. QUEUE MODAL (排隊登記) -->
+  <div id="queueModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
+      <button onclick="closeModal('queueModal')" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+        <i class="fa-solid fa-xmark text-lg"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-people-arrows"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-white text-base">排隊登記 / 預約交換車位</h3>
+          <p class="text-xs text-slate-400">目標車位：<span id="queueSpotName" class="font-bold text-amber-400 font-mono-num"></span></p>
+        </div>
+      </div>
+
+      <!-- Current Occupant Info -->
+      <div class="bg-slate-900/90 p-3.5 rounded-xl border border-slate-700/80 mb-4">
+        <span class="text-xs text-slate-400 block mb-1">目前正在充電中：</span>
+        <div class="flex items-center justify-between text-sm">
+          <span id="queueSpotCurrentHolder" class="font-bold text-white"></span>
+          <span id="queueSpotEndTime" class="text-emerald-400 font-mono-num font-semibold"></span>
+        </div>
+        <div class="text-xs text-slate-400 mt-1 flex items-center gap-2">
+          <i class="fa-solid fa-phone text-slate-500"></i>
+          <span id="queueSpotCurrentPhone" class="font-mono-num"></span>
+        </div>
+      </div>
+
+      <!-- Queue User Summary -->
+      <div class="bg-slate-900/50 p-3.5 rounded-xl border border-slate-700/80 mb-4 flex items-center justify-between">
+        <div>
+          <span class="text-xs text-slate-400 block">排隊登記人</span>
+          <span id="modalQueueUserName" class="text-sm font-bold text-amber-300">未選擇</span>
+          <span id="modalQueueUserPhone" class="text-xs text-slate-400 block font-mono-num"></span>
+        </div>
+        <button onclick="openModal('userSelectModal')" class="text-xs text-amber-400 hover:text-amber-300 underline">
+          更換車主
+        </button>
+      </div>
+
+      <form id="queueForm" onsubmit="handleQueueSubmit(event)" class="space-y-4">
+        <input type="hidden" id="queueSpotId">
+
+        <div>
+          <label class="block text-xs font-medium text-slate-300 mb-1">
+            預計接續充到幾點 (整點或 30 分)
+          </label>
+          <div class="grid grid-cols-2 gap-2 mt-1">
+            <input type="date" id="queueEndDate" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono-num">
+            <select id="queueEndTimeSelect" required class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono-num">
+              <!-- Dynamically populated half-hour list -->
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-slate-300 mb-1">提醒備註 (選填)</label>
+          <input type="text" id="queueNote" placeholder="例如：到期請撥電話，我 5 分鐘內下樓換車" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500">
+        </div>
+
+        <div class="pt-2">
+          <button type="submit" class="w-full py-3 bg-amber-600 hover:bg-amber-500 text-white font-bold text-sm rounded-xl shadow-lg shadow-amber-600/30 transition flex items-center justify-center gap-2">
+            <i class="fa-solid fa-clock"></i>
+            加入排隊名單
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 4. SPOT DETAIL / CHECK OUT / HANDOVER MODAL -->
+  <div id="spotActionModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+      <button onclick="closeModal('spotActionModal')" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+        <i class="fa-solid fa-xmark text-lg"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-4">
+        <div id="actionModalIcon" class="w-12 h-12 rounded-xl flex items-center justify-center text-xl bg-cyan-500/20 text-cyan-400">
+          <i class="fa-solid fa-charging-station"></i>
+        </div>
+        <div>
+          <h3 id="actionModalTitle" class="font-bold text-white text-lg font-mono-num">車位編號</h3>
+          <p id="actionModalSub" class="text-xs text-slate-400">車位即時資訊與操作</p>
+        </div>
+      </div>
+
+      <!-- Current Status Card -->
+      <div id="actionCurrentHolderCard" class="bg-slate-900/90 rounded-xl p-4 border border-slate-700/80 mb-5 space-y-2">
+        <!-- Injected dynamically -->
+      </div>
+
+      <!-- Queue List Card -->
+      <div class="mb-5">
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+            <i class="fa-solid fa-list-ol text-amber-400"></i>
+            排隊候補名單 (<span id="actionQueueCount">0</span>)
+          </h4>
+          <span class="text-[11px] text-slate-400">依序交換充電</span>
+        </div>
+        <div id="actionQueueList" class="space-y-2 max-h-40 overflow-y-auto pr-1">
+          <!-- Dynamically populated queue items -->
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div id="actionButtonContainer" class="flex flex-col gap-2.5 pt-2 border-t border-slate-700">
+        <!-- Check Out button, Handover to next button, Queue button -->
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. QR CODE SHARE MODAL -->
+  <div id="qrModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md p-6 shadow-2xl relative text-center">
+      <button onclick="closeModal('qrModal')" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+        <i class="fa-solid fa-xmark text-lg"></i>
+      </button>
+
+      <div class="w-12 h-12 mx-auto rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-2xl mb-3">
+        <i class="fa-solid fa-qrcode"></i>
+      </div>
+      <h3 class="font-bold text-white text-lg">手機掃描 QR Code 說明</h3>
+      <p class="text-xs text-slate-400 mt-1 mb-4">手機需連上可訪問此網頁的網路位址（HTTP 網址）方可開啟</p>
+
+      <div class="bg-white p-4 rounded-2xl inline-block shadow-inner mx-auto mb-4">
+        <div id="qrcodeCanvas"></div>
+      </div>
+
+      <!-- LAN / Web URL Customizer for phone access -->
+      <div class="bg-slate-900/90 p-3 rounded-xl border border-slate-700 text-left text-xs text-slate-300 mb-4 space-y-2">
+        <div>
+          <label class="block text-[11px] text-slate-400 mb-1">
+            <i class="fa-solid fa-network-wired text-emerald-400 mr-1"></i> QR Code 連結網址 (手機訪問)：
+          </label>
+          <div class="flex gap-1.5">
+            <input type="text" id="customQrUrlInput" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 font-mono focus:outline-none focus:border-emerald-500" placeholder="例如：http://17.92.221.93:8000">
+            <button onclick="updateCustomQrCode()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold whitespace-nowrap transition">
+              更新
+            </button>
+          </div>
+        </div>
+
+        <div id="fileProtocolWarning" class="hidden p-2 rounded bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-300">
+          <i class="fa-solid fa-circle-exclamation mr-1"></i>
+          <strong>注意：</strong>目前是以本機檔案 (<code>file://</code>) 開啟，手機無法直接連入電腦硬碟。請參考下方終端機指令啟動 Web Server，或發布至內部伺服器/GitHub Pages。
+        </div>
+
+        <div class="text-[11px] text-slate-400">
+          目前產出的 QR 內容：<br>
+          <span id="qrCurrentUrlText" class="font-mono text-emerald-300 break-all"></span>
+        </div>
+      </div>
+
+      <div class="flex gap-2">
+        <button onclick="copyCurrentUrl()" class="flex-1 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold rounded-lg transition">
+          <i class="fa-regular fa-copy mr-1"></i> 複製網址
+        </button>
+        <button onclick="printQr()" class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg transition">
+          <i class="fa-solid fa-print mr-1"></i> 列印 QR Code
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. ADMIN PIN MODAL -->
+  <div id="adminPinModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-xs p-6 shadow-2xl relative text-center">
+      <button onclick="closeModal('adminPinModal')" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+        <i class="fa-solid fa-xmark text-lg"></i>
+      </button>
+
+      <div class="w-12 h-12 mx-auto rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-xl mb-3">
+        <i class="fa-solid fa-key"></i>
+      </div>
+      <h3 class="font-bold text-white text-base">管理員權限驗證</h3>
+      <p class="text-xs text-slate-400 mt-1 mb-4">輸入專屬密碼以啟用各車位資料編輯與管理功能</p>
+
+      <form onsubmit="handleAdminLogin(event)" class="space-y-4">
+        <input type="password" id="adminPinInput" placeholder="請輸入管理密碼 (預設: 8888)" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-center text-white tracking-widest text-lg font-mono focus:outline-none focus:border-amber-500">
+        <p class="text-[11px] text-slate-500">預設管理員密碼為：<span class="text-amber-400 font-mono">8888</span></p>
+        <button type="submit" class="w-full py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold text-sm rounded-lg transition">
+          驗證登入
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 7. ADMIN SPOT EDIT MODAL -->
+  <div id="adminSpotEditModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md p-6 shadow-2xl relative">
+      <button onclick="closeModal('adminSpotEditModal')" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+        <i class="fa-solid fa-xmark text-lg"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-pen-to-square"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-white text-base">【管理員】車位資料修改</h3>
+          <p class="text-xs text-slate-400">正在編輯車位：<span id="adminEditSpotId" class="font-bold text-amber-400 font-mono-num"></span></p>
+        </div>
+      </div>
+
+      <form id="adminEditForm" onsubmit="handleAdminSpotSave(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-300 mb-1">車位狀態</label>
+          <select id="adminSpotStatus" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500 font-mono-num">
+            <option value="free">空閒 (Free)</option>
+            <option value="charging">充電中 (Charging)</option>
+            <option value="maintenance">維護暫停 (Maintenance)</option>
+          </select>
+        </div>
+
+        <div id="adminHolderFields" class="space-y-3 pt-2 border-t border-slate-700/60">
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">車主姓名</label>
+            <input type="text" id="adminEditUserName" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">聯絡電話</label>
+            <input type="text" id="adminEditUserPhone" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500">
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs font-medium text-slate-300 mb-1">預計結束日期</label>
+              <input type="date" id="adminEditDate" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-300 mb-1">預計時間 (:00/:30)</label>
+              <select id="adminEditTime" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500">
+                <!-- Half hour options -->
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">備註說明</label>
+            <input type="text" id="adminEditNote" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-500">
+          </div>
+        </div>
+
+        <div class="pt-3 flex gap-2">
+          <button type="button" onclick="adminForceResetSpot()" class="flex-1 py-2.5 bg-rose-700 hover:bg-rose-600 text-white font-bold text-xs rounded-lg transition">
+            <i class="fa-solid fa-trash-can mr-1"></i> 強制清空重置
+          </button>
+          <button type="submit" class="flex-1 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-lg transition">
+            <i class="fa-solid fa-floppy-disk mr-1"></i> 儲存變更
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 8. ADMIN USER MANAGEMENT & CREATION MODAL -->
+  <div id="adminUserManageModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+      <button onclick="closeModal('adminUserManageModal')" class="absolute top-4 right-4 text-slate-400 hover:text-white">
+        <i class="fa-solid fa-xmark text-lg"></i>
+      </button>
+
+      <div class="flex items-center gap-3 mb-5">
+        <div class="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-lg">
+          <i class="fa-solid fa-users-gear"></i>
+        </div>
+        <div>
+          <h3 class="font-bold text-white text-base">【管理員】車主名冊管理與批量建立</h3>
+          <p class="text-xs text-slate-400">建立、編輯或刪除所有車位使用者資料</p>
+        </div>
+      </div>
+
+      <!-- Quick Add User by Admin -->
+      <div class="bg-slate-900/90 p-4 rounded-xl border border-slate-700/80 mb-5">
+        <h4 class="text-xs font-bold text-amber-300 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+          <i class="fa-solid fa-user-plus"></i> 新增車主至資料庫
+        </h4>
+        <form onsubmit="handleAdminCreateUser(event)" class="space-y-3">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1">姓名 <span class="text-rose-400">*</span></label>
+              <input type="text" id="adminNewUserName" required placeholder="例如：林主任" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500">
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1">電話 / 分機 <span class="text-rose-400">*</span></label>
+              <input type="tel" id="adminNewUserPhone" required placeholder="0912-000-111" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500 font-mono-num">
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-400 mb-1">車牌 (選填)</label>
+              <input type="text" id="adminNewUserPlate" placeholder="EV-8899" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white uppercase focus:outline-none focus:border-amber-500 font-mono-num">
+            </div>
+          </div>
+          <button type="submit" class="w-full py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-lg transition shadow-md shadow-amber-600/20">
+            <i class="fa-solid fa-plus mr-1"></i> 新增此車主
+          </button>
+        </form>
+      </div>
+
+      <!-- Existing Users Roster -->
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <h4 class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+            <i class="fa-solid fa-address-book text-slate-400"></i>
+            目前系統車主名單 (<span id="adminUserCount">0</span>)
+          </h4>
+          <span class="text-[11px] text-slate-500">點擊垃圾桶可直接移除</span>
+        </div>
+
+        <div id="adminUserList" class="space-y-2 max-h-56 overflow-y-auto pr-1">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- JavaScript Application Logic -->
+  <script>
+    // --- Constant Definitions & Initial Data Structure ---
+    const TOTAL_SPOTS_CONFIG = {
+      'LY1-B1': [
+        // Exact Layout from user image 3:
+        // Top Left Row: 09, 08, 07
+        // Top Right Row: 06, 05, 04
+        // Right Vertical Column: 03, 02, 01
+        { id: 'LY1B1-09', name: 'LY1B1-09', section: 'top-left' },
+        { id: 'LY1B1-08', name: 'LY1B1-08', section: 'top-left' },
+        { id: 'LY1B1-07', name: 'LY1B1-07', section: 'top-left' },
+        { id: 'LY1B1-06', name: 'LY1B1-06', section: 'top-right' },
+        { id: 'LY1B1-05', name: 'LY1B1-05', section: 'top-right' },
+        { id: 'LY1B1-04', name: 'LY1B1-04', section: 'top-right' },
+        { id: 'LY1B1-03', name: 'LY1B1-03', section: 'right-col' },
+        { id: 'LY1B1-02', name: 'LY1B1-02', section: 'right-col' },
+        { id: 'LY1B1-01', name: 'LY1B1-01', section: 'right-col' }
+      ],
+      'LY1-B2': [
+        // Exact Layout from user image 2:
+        // Top Left: 04
+        // Top Right: 03, 02, 01
+        { id: 'LY1B2-04', name: 'LY1B2-04', section: 'top-left' },
+        { id: 'LY1B2-03', name: 'LY1B2-03', section: 'top-right' },
+        { id: 'LY1B2-02', name: 'LY1B2-02', section: 'top-right' },
+        { id: 'LY1B2-01', name: 'LY1B2-01', section: 'top-right' }
+      ],
+      'LY3-B1': [
+        // Exact Layout from user image 1:
+        // Top Left: 01, 02, 03, 04
+        // Bottom Left: 05, 06
+        { id: 'LY3B1-01', name: 'LY3B1-01', section: 'top' },
+        { id: 'LY3B1-02', name: 'LY3B1-02', section: 'top' },
+        { id: 'LY3B1-03', name: 'LY3B1-03', section: 'top' },
+        { id: 'LY3B1-04', name: 'LY3B1-04', section: 'top' },
+        { id: 'LY3B1-05', name: 'LY3B1-05', section: 'bottom' },
+        { id: 'LY3B1-06', name: 'LY3B1-06', section: 'bottom' }
+      ]
+    };
+
+    // Application State
+    let currentFloor = 'LY1-B1';
+    let isAdmin = false;
+    let currentUser = null; // { name, phone, plate }
+    let usersDatabase = []; // Array of { name, phone, plate }
+    let spotsState = {}; // { spotId: { status, currentUser, startTime, expectedEndTime, note, queue } }
+    let lastDataVersion = 0; // Timestamp version to avoid overwrite loops
+
+    // --- Local Storage Initialization ---
+    function initData() {
+      // 1. Load users
+      const savedUsers = localStorage.getItem('ev_users_db');
+      if (savedUsers) {
+        usersDatabase = JSON.parse(savedUsers);
+      } else {
+        // Initial sample data
+        usersDatabase = [
+          { name: '陳經理', phone: '0912-345-678', plate: 'EAA-1688' },
+          { name: '王工程師', phone: '0988-765-432', plate: 'EV-9999' },
+          { name: '林助理', phone: '0922-111-222', plate: 'EAB-5200' },
+          { name: '張組長', phone: '0933-444-555', plate: 'TES-0011' }
+        ];
+        localStorage.setItem('ev_users_db', JSON.stringify(usersDatabase));
+      }
+
+      // Default active user
+      const savedActiveUser = localStorage.getItem('ev_active_user');
+      if (savedActiveUser) {
+        currentUser = JSON.parse(savedActiveUser);
+      } else if (usersDatabase.length > 0) {
+        currentUser = usersDatabase[0];
+      }
+
+      // 2. Load spots state
+      const savedSpots = localStorage.getItem('ev_spots_state');
+      if (savedSpots) {
+        spotsState = JSON.parse(savedSpots);
+      } else {
+        // Seed default demo data with nice realistic times
+        const now = new Date();
+        const todayStr = now.toISOString().split('T')[0];
+
+        // Default empty for all 19 spots
+        Object.keys(TOTAL_SPOTS_CONFIG).forEach(fl => {
+          TOTAL_SPOTS_CONFIG[fl].forEach(s => {
+            spotsState[s.id] = {
+              status: 'free',
+              currentUser: null,
+              startTime: null,
+              expectedEndTime: null,
+              note: '',
+              queue: []
+            };
+          });
+        });
+
+        // Add 2 realistic active examples
+        spotsState['LY1B1-04'] = {
+          status: 'charging',
+          currentUser: usersDatabase[0],
+          startTime: `${todayStr} 09:00`,
+          expectedEndTime: `${todayStr} 12:00`,
+          note: '充至 80% 可拔槍',
+          queue: [
+            {
+              user: usersDatabase[1],
+              expectedEndTime: `${todayStr} 15:30`,
+              note: '在辦公室，換我時請撥手機',
+              createdAt: `${todayStr} 09:30`
+            }
+          ]
+        };
+
+        spotsState['LY3B1-01'] = {
+          status: 'charging',
+          currentUser: usersDatabase[2],
+          startTime: `${todayStr} 10:00`,
+          expectedEndTime: `${todayStr} 13:30`,
+          note: '中午前移車',
+          queue: []
+        };
+
+        localStorage.setItem('ev_spots_state', JSON.stringify(spotsState));
+      }
+
+      // Check URL parameters for direct floor or spot QR scan
+      const urlParams = new URLSearchParams(window.location.search);
+      const paramFloor = urlParams.get('floor');
+      const paramSpot = urlParams.get('spot');
+      if (paramFloor && TOTAL_SPOTS_CONFIG[paramFloor]) {
+        currentFloor = paramFloor;
+      }
+
+      updateUserUI();
+      renderTimeOptions();
+      renderFloor();
+      renderQueueTable();
+      updateStats();
+      initQRCode();
+
+      if (paramSpot && spotsState[paramSpot]) {
+        setTimeout(() => openSpotAction(paramSpot), 400);
+      }
+    }
+
+    function saveSpots() {
+      lastDataVersion = Date.now();
+      localStorage.setItem('ev_spots_state', JSON.stringify(spotsState));
+      localStorage.setItem('ev_data_version', String(lastDataVersion));
+      renderFloor();
+      renderQueueTable();
+      updateStats();
+      broadcastCloudData(); // Sync immediately across devices
+    }
+
+    function saveUsers() {
+      lastDataVersion = Date.now();
+      localStorage.setItem('ev_users_db', JSON.stringify(usersDatabase));
+      localStorage.setItem('ev_data_version', String(lastDataVersion));
+      updateUserUI();
+      if (typeof renderAdminUserRoster === 'function') {
+        renderAdminUserRoster();
+      }
+      broadcastCloudData(); // Sync immediately across devices
+    }
+
+    // --- Real-time Clock ---
+    function updateClock() {
+      const now = new Date();
+      const str = now.toLocaleTimeString('zh-TW', { hour12: false });
+      const dateStr = now.toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit', weekday: 'narrow' });
+      const clockEl = document.getElementById('headerClock');
+      if (clockEl) clockEl.textContent = `${dateStr} ${str}`;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // --- Time Select Builder (00 & 30 steps only) ---
+    function renderTimeOptions() {
+      const selects = [
+        document.getElementById('checkInTimeSelect'),
+        document.getElementById('queueEndTimeSelect'),
+        document.getElementById('adminEditTime')
+      ];
+
+      const options = [];
+      for (let h = 7; h <= 23; h++) {
+        const hh = String(h).padStart(2, '0');
+        options.push(`${hh}:00`);
+        options.push(`${hh}:30`);
+      }
+      for (let h = 0; h <= 6; h++) {
+        const hh = String(h).padStart(2, '0');
+        options.push(`${hh}:00`);
+        options.push(`${hh}:30`);
+      }
+
+      selects.forEach(sel => {
+        if (!sel) return;
+        sel.innerHTML = '';
+        options.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = `${t}`;
+          sel.appendChild(opt);
+        });
+      });
+
+      // Set default dates to today
+      const today = new Date().toISOString().split('T')[0];
+      const checkInDateEl = document.getElementById('checkInDate');
+      const queueEndDateEl = document.getElementById('queueEndDate');
+      const adminEditDateEl = document.getElementById('adminEditDate');
+      if (checkInDateEl) checkInDateEl.value = today;
+      if (queueEndDateEl) queueEndDateEl.value = today;
+      if (adminEditDateEl) adminEditDateEl.value = today;
+
+      // Select logical next +2 hour
+      const nextH = (new Date().getHours() + 2) % 24;
+      const defTime = `${String(nextH).padStart(2, '0')}:00`;
+      if (document.getElementById('checkInTimeSelect')) document.getElementById('checkInTimeSelect').value = defTime;
+      if (document.getElementById('queueEndTimeSelect')) document.getElementById('queueEndTimeSelect').value = defTime;
+    }
+
+    // --- User Management ---
+    function updateUserUI() {
+      const label = document.getElementById('currentUserLabel');
+      const dropdown = document.getElementById('userSelectDropdown');
+      
+      if (currentUser) {
+        label.textContent = `${currentUser.name} (${currentUser.phone.slice(-4)})`;
+        document.getElementById('modalCurrentUserName').textContent = currentUser.name;
+        document.getElementById('modalCurrentUserPhone').textContent = `電話: ${currentUser.phone} ${currentUser.plate ? '· 車牌: ' + currentUser.plate : ''}`;
+        document.getElementById('modalQueueUserName').textContent = currentUser.name;
+        document.getElementById('modalQueueUserPhone').textContent = `電話: ${currentUser.phone} ${currentUser.plate ? '· 車牌: ' + currentUser.plate : ''}`;
+      } else {
+        label.textContent = '請先建立車主身分';
+      }
+
+      dropdown.innerHTML = '';
+      if (usersDatabase.length === 0) {
+        dropdown.innerHTML = '<option value="">目前尚無使用者，請於下方建立</option>';
+      } else {
+        usersDatabase.forEach((u, idx) => {
+          const opt = document.createElement('option');
+          opt.value = idx;
+          opt.textContent = `${u.name} - ${u.phone} ${u.plate ? '(' + u.plate + ')' : ''}`;
+          if (currentUser && currentUser.name === u.name && currentUser.phone === u.phone) {
+            opt.selected = true;
+          }
+          dropdown.appendChild(opt);
+        });
+      }
+    }
+
+    function confirmSelectUser() {
+      const dropdown = document.getElementById('userSelectDropdown');
+      const idx = dropdown.value;
+      if (idx !== '' && usersDatabase[idx]) {
+        currentUser = usersDatabase[idx];
+        localStorage.setItem('ev_active_user', JSON.stringify(currentUser));
+        updateUserUI();
+        closeModal('userSelectModal');
+        showToast(`已切換目前車主：${currentUser.name}`);
+      }
+    }
+
+    function handleCreateUser(e) {
+      e.preventDefault();
+      const name = document.getElementById('newUserName').value.trim();
+      const phone = document.getElementById('newUserPhone').value.trim();
+      const plate = document.getElementById('newUserPlate').value.trim();
+
+      if (!name || !phone) {
+        alert('請填寫姓名與電話');
+        return;
+      }
+
+      let existing = usersDatabase.find(u => u.phone === phone);
+      if (existing) {
+        existing.name = name;
+        existing.plate = plate;
+        currentUser = existing;
+      } else {
+        const newUser = { name, phone, plate };
+        usersDatabase.push(newUser);
+        currentUser = newUser;
+      }
+
+      localStorage.setItem('ev_active_user', JSON.stringify(currentUser));
+      saveUsers();
+      document.getElementById('newUserForm').reset();
+      closeModal('userSelectModal');
+      showToast(`歡迎 ${currentUser.name}！使用者資料建立完成`);
+    }
+
+    // --- Floor Switching ---
+    function switchFloor(floor) {
+      currentFloor = floor;
+      document.querySelectorAll('.floor-tab').forEach(b => {
+        b.className = 'floor-tab px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 text-slate-400 hover:text-white';
+      });
+      const activeBtn = document.getElementById(`tab-${floor}`);
+      if (activeBtn) {
+        activeBtn.className = 'floor-tab px-4 py-2 rounded-lg text-sm font-bold transition flex items-center gap-2 bg-emerald-600 text-white shadow-md';
+      }
+
+      document.getElementById('mapWatermark').textContent = floor.replace('-', ' ');
+      renderFloor();
+      initQRCode();
+    }
+
+    // --- Top-View Diagram / Floor Rendering (Strictly match provided sketches) ---
+    function renderFloor() {
+      const container = document.getElementById('floorContainer');
+      container.innerHTML = '';
+
+      if (currentFloor === 'LY1-B1') {
+        renderLY1B1(container);
+      } else if (currentFloor === 'LY1-B2') {
+        renderLY1B2(container);
+      } else if (currentFloor === 'LY3-B1') {
+        renderLY3B1(container);
+      }
+    }
+
+    // Helper: Generate spot card HTML with stylish top-view rounded corners like the diagram
+    function getSpotCardHTML(spotId) {
+      const state = spotsState[spotId] || { status: 'free', queue: [] };
+      const isCharging = state.status === 'charging';
+      const isFree = state.status === 'free';
+      const isMaintenance = state.status === 'maintenance';
+      const hasQueue = state.queue && state.queue.length > 0;
+
+      let isOverdue = false;
+      if (isCharging && state.expectedEndTime) {
+        const endDt = new Date(state.expectedEndTime.replace(' ', 'T'));
+        if (new Date() > endDt) {
+          isOverdue = true;
+        }
+      }
+
+      let borderColor = 'border-slate-500/80';
+      let bgColor = 'bg-slate-900/90';
+      let statusBadge = '<span class="text-xs text-emerald-400 font-semibold flex items-center gap-1"><i class="fa-solid fa-circle-check text-[10px]"></i> 空閒可充</span>';
+      let pulseClass = '';
+
+      if (isCharging) {
+        borderColor = isOverdue ? 'border-rose-500' : 'border-emerald-500';
+        bgColor = isOverdue ? 'bg-rose-950/40' : 'bg-emerald-950/40';
+        pulseClass = isOverdue ? '' : 'charging-pulse';
+        statusBadge = isOverdue 
+          ? '<span class="text-xs text-rose-400 font-bold flex items-center gap-1"><i class="fa-solid fa-triangle-exclamation text-[10px]"></i> 已逾期</span>'
+          : '<span class="text-xs text-emerald-400 font-bold flex items-center gap-1"><i class="fa-solid fa-bolt text-[10px]"></i> 充電中</span>';
+      } else if (isMaintenance) {
+        borderColor = 'border-amber-600/80';
+        bgColor = 'bg-amber-950/40';
+        statusBadge = '<span class="text-xs text-amber-400 font-medium">維修中</span>';
+      }
+
+      const queueBadge = hasQueue 
+        ? `<span class="bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] px-1.5 py-0.5 rounded-full font-bold">排隊 ${state.queue.length}</span>`
+        : '';
+
+      const timeDisplay = isCharging && state.expectedEndTime 
+        ? `<div class="mt-1 text-[11px] font-mono-num text-slate-300 flex items-center justify-between border-t border-slate-700/60 pt-1">
+             <span class="text-slate-400">至</span>
+             <span class="font-bold ${isOverdue ? 'text-rose-400 animate-pulse' : 'text-emerald-300'}">${state.expectedEndTime.split(' ')[1] || state.expectedEndTime}</span>
+           </div>`
+        : `<div class="mt-1 text-[11px] text-slate-500 border-t border-slate-800 pt-1 flex justify-between"><span>無使用</span><span>可隨到充</span></div>`;
+
+      const holderDisplay = isCharging && state.currentUser 
+        ? `<div class="text-xs font-semibold text-white truncate max-w-[105px]">${state.currentUser.name}</div>`
+        : `<div class="text-xs text-slate-500">可使用</div>`;
+
+      return `
+        <div onclick="openSpotAction('${spotId}')" 
+             class="parking-slot relative cursor-pointer rounded-2xl border-2 ${borderColor} ${bgColor} ${pulseClass} p-3 w-32 sm:w-36 h-28 flex flex-col justify-between shadow-md backdrop-blur-sm select-none">
+          
+          <!-- Top Row: ID & Queue Tag -->
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-xs sm:text-sm font-mono-num text-white tracking-tight">${spotId}</span>
+            ${queueBadge}
+          </div>
+
+          <!-- Middle: Status & Occupant -->
+          <div class="my-auto">
+            ${statusBadge}
+            ${holderDisplay}
+          </div>
+
+          <!-- Bottom: End Time -->
+          ${timeDisplay}
+        </div>
+      `;
+    }
+
+    // 1. Render LY1 B1:
+    // Top Left: 09, 08, 07 | Top Right: 06, 05, 04 | Right column: 03, 02, 01
+    function renderLY1B1(container) {
+      container.innerHTML = `
+        <div class="w-full flex flex-col justify-between flex-1 gap-10">
+          
+          <!-- Top Section: Left (09,08,07) and Right (06,05,04) - NEVER WRAP -->
+          <div class="flex items-start justify-between flex-nowrap w-full gap-4">
+            
+            <!-- Top Left Group: 09, 08, 07 -->
+            <div class="flex items-center gap-3 bg-slate-900/80 p-3 rounded-2xl border border-slate-700/60 shadow-inner flex-nowrap">
+              ${getSpotCardHTML('LY1B1-09')}
+              ${getSpotCardHTML('LY1B1-08')}
+              ${getSpotCardHTML('LY1B1-07')}
+            </div>
+
+            <!-- Top Right Group: 06, 05, 04 -->
+            <div class="flex items-center gap-3 bg-slate-900/80 p-3 rounded-2xl border border-slate-700/60 shadow-inner flex-nowrap">
+              ${getSpotCardHTML('LY1B1-06')}
+              ${getSpotCardHTML('LY1B1-05')}
+              ${getSpotCardHTML('LY1B1-04')}
+            </div>
+          </div>
+
+          <!-- Middle & Bottom Section: Central driveway, Right Vertical Column: 03, 02, 01 -->
+          <div class="flex justify-end items-end pb-2">
+            <div class="flex flex-col items-center gap-3 bg-slate-900/80 p-3 rounded-2xl border border-slate-700/60 shadow-inner">
+              ${getSpotCardHTML('LY1B1-03')}
+              ${getSpotCardHTML('LY1B1-02')}
+              ${getSpotCardHTML('LY1B1-01')}
+            </div>
+          </div>
+
+        </div>
+      `;
+    }
+
+    // 2. Render LY1 B2:
+    // Top Left: 04 | Top Right: 03, 02, 01
+    function renderLY1B2(container) {
+      container.innerHTML = `
+        <div class="w-full flex flex-col justify-between flex-1 gap-12">
+          
+          <!-- Top Row: Spot 04 on far left, Spots 03, 02, 01 on right - NEVER WRAP -->
+          <div class="flex items-start justify-between flex-nowrap w-full gap-4">
+            <!-- Top Left Spot 04 -->
+            <div class="bg-slate-900/80 p-3 rounded-2xl border border-slate-700/60 shadow-inner flex-nowrap">
+              ${getSpotCardHTML('LY1B2-04')}
+            </div>
+
+            <!-- Top Right Group: 03, 02, 01 -->
+            <div class="flex items-center gap-3 bg-slate-900/80 p-3 rounded-2xl border border-slate-700/60 shadow-inner flex-nowrap">
+              ${getSpotCardHTML('LY1B2-03')}
+              ${getSpotCardHTML('LY1B2-02')}
+              ${getSpotCardHTML('LY1B2-01')}
+            </div>
+          </div>
+
+          <!-- Open drive area in LY1 B2 center/bottom -->
+          <div class="py-16 flex items-center justify-center text-slate-500 text-xs tracking-wider">
+            <span>停車場通道與行車動線 (LY1 B2)</span>
+          </div>
+
+        </div>
+      `;
+    }
+
+    // 3. Render LY3 B1:
+    // Top: 01, 02, 03, 04 | Bottom Left: 05, 06
+    function renderLY3B1(container) {
+      container.innerHTML = `
+        <div class="w-full flex flex-col justify-between flex-1 gap-12">
+          
+          <!-- Top Row: 01, 02, 03, 04 - NEVER WRAP -->
+          <div class="flex items-start justify-start flex-nowrap">
+            <div class="flex items-center gap-3 bg-slate-900/80 p-3 rounded-2xl border border-slate-700/60 shadow-inner flex-nowrap">
+              ${getSpotCardHTML('LY3B1-01')}
+              ${getSpotCardHTML('LY3B1-02')}
+              ${getSpotCardHTML('LY3B1-03')}
+              ${getSpotCardHTML('LY3B1-04')}
+            </div>
+          </div>
+
+          <!-- Bottom Left Row: 05, 06 - NEVER WRAP -->
+          <div class="flex items-end justify-start pb-2 flex-nowrap">
+            <div class="flex items-center gap-3 bg-slate-900/80 p-3 rounded-2xl border border-slate-700/60 shadow-inner flex-nowrap">
+              ${getSpotCardHTML('LY3B1-05')}
+              ${getSpotCardHTML('LY3B1-06')}
+            </div>
+          </div>
+
+        </div>
+      `;
+    }
+
+    // --- Real-time Queue & Table Rendering ---
+    function renderQueueTable() {
+      const tbody = document.getElementById('queueTableBody');
+      tbody.innerHTML = '';
+
+      Object.keys(TOTAL_SPOTS_CONFIG).forEach(fl => {
+        TOTAL_SPOTS_CONFIG[fl].forEach(s => {
+          const state = spotsState[s.id] || { status: 'free', queue: [] };
+          const isBusy = state.status === 'charging';
+          const hasQueue = state.queue && state.queue.length > 0;
+
+          const tr = document.createElement('tr');
+          tr.className = 'hover:bg-slate-800/60 transition border-b border-slate-750';
+
+          let statusSpan = '<span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">空閒可充</span>';
+          if (isBusy) {
+            statusSpan = '<span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">充電中</span>';
+          } else if (state.status === 'maintenance') {
+            statusSpan = '<span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">維護中</span>';
+          }
+
+          const currentHolderName = isBusy && state.currentUser ? state.currentUser.name : '<span class="text-slate-500">-</span>';
+          const currentPhone = isBusy && state.currentUser ? state.currentUser.phone : '<span class="text-slate-500">-</span>';
+          const endTime = isBusy && state.expectedEndTime ? `<span class="font-mono-num font-bold text-emerald-400">${state.expectedEndTime}</span>` : '<span class="text-slate-500">-</span>';
+
+          let nextQueueStr = '<span class="text-slate-500">無人排隊</span>';
+          if (hasQueue) {
+            const nextU = state.queue[0];
+            nextQueueStr = `<div class="flex items-center gap-1.5 font-medium text-amber-300">
+                              <i class="fa-solid fa-user-clock text-xs"></i>
+                              <span>${nextU.user.name} (${nextU.user.phone})</span>
+                              ${state.queue.length > 1 ? `<span class="text-xs text-slate-400 font-normal">+還有 ${state.queue.length - 1} 人</span>` : ''}
+                            </div>`;
+          }
+
+          tr.innerHTML = `
+            <td class="py-3 px-4 font-mono-num font-bold text-white flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full ${isBusy ? 'bg-cyan-400 animate-pulse' : 'bg-emerald-400'}"></span>
+              ${s.id}
+            </td>
+            <td class="py-3 px-4">${statusSpan}</td>
+            <td class="py-3 px-4 font-medium">${currentHolderName}</td>
+            <td class="py-3 px-4 font-mono-num">${currentPhone}</td>
+            <td class="py-3 px-4">${endTime}</td>
+            <td class="py-3 px-4">${nextQueueStr}</td>
+            <td class="py-3 px-4 text-center">
+              <button onclick="openSpotAction('${s.id}')" class="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium rounded-lg transition">
+                操作 / 詳情
+              </button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      });
+    }
+
+    // --- Statistics Counter ---
+    function updateStats() {
+      let free = 0;
+      let busy = 0;
+      let queued = 0;
+      let overdue = 0;
+
+      const now = new Date();
+
+      Object.values(spotsState).forEach(s => {
+        if (s.status === 'free') free++;
+        if (s.status === 'charging') {
+          busy++;
+          if (s.expectedEndTime) {
+            const endDt = new Date(s.expectedEndTime.replace(' ', 'T'));
+            if (now > endDt) overdue++;
+          }
+        }
+        if (s.queue && s.queue.length > 0) queued++;
+      });
+
+      document.getElementById('statFree').textContent = free;
+      document.getElementById('statBusy').textContent = busy;
+      document.getElementById('statQueued').textContent = queued;
+      document.getElementById('statOverdue').textContent = overdue;
+    }
+
+    // --- Spot Action Modal Logic ---
+    let currentActiveSpotId = null;
+
+    function openSpotAction(spotId) {
+      currentActiveSpotId = spotId;
+      const state = spotsState[spotId] || { status: 'free', queue: [] };
+      const isCharging = state.status === 'charging';
+      const isFree = state.status === 'free';
+      const hasQueue = state.queue && state.queue.length > 0;
+
+      document.getElementById('actionModalTitle').textContent = `充電車位：${spotId}`;
+      document.getElementById('actionModalSub').textContent = `所屬樓層區域：${spotId.startsWith('LY1B1') ? 'LY1 B1' : spotId.startsWith('LY1B2') ? 'LY1 B2' : 'LY3 B1'}`;
+
+      // Populate current occupant
+      const holderCard = document.getElementById('actionCurrentHolderCard');
+      if (isCharging && state.currentUser) {
+        let isOverdue = false;
+        if (state.expectedEndTime) {
+          const endDt = new Date(state.expectedEndTime.replace(' ', 'T'));
+          if (new Date() > endDt) isOverdue = true;
+        }
+
+        holderCard.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="text-xs text-slate-400">目前使用車主</span>
+            <span class="text-xs px-2 py-0.5 rounded-full ${isOverdue ? 'bg-rose-500/20 text-rose-400 font-bold' : 'bg-emerald-500/20 text-emerald-400'}">
+              ${isOverdue ? '● 已超過預計時間' : '● 正在充電中'}
+            </span>
+          </div>
+          <div class="flex items-center justify-between pt-1">
+            <div class="text-base font-bold text-white flex items-center gap-2">
+              <i class="fa-solid fa-user text-emerald-400 text-sm"></i>
+              ${state.currentUser.name}
+              ${state.currentUser.plate ? `<span class="text-xs bg-slate-800 px-1.5 py-0.5 rounded font-mono text-slate-300">${state.currentUser.plate}</span>` : ''}
+            </div>
+            <a href="tel:${state.currentUser.phone}" class="text-xs text-emerald-400 hover:underline font-mono-num flex items-center gap-1">
+              <i class="fa-solid fa-phone"></i> ${state.currentUser.phone}
+            </a>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-800 text-slate-300">
+            <div><span class="text-slate-500">開始時間:</span> <span class="font-mono-num">${state.startTime || '-'}</span></div>
+            <div><span class="text-slate-500">預計結束:</span> <span class="font-mono-num font-bold text-amber-300">${state.expectedEndTime || '-'}</span></div>
+          </div>
+          ${state.note ? `<div class="text-xs text-slate-400 pt-1 italic"><i class="fa-regular fa-comment-dots mr-1"></i> "${state.note}"</div>` : ''}
+        `;
+      } else {
+        holderCard.innerHTML = `
+          <div class="text-center py-4">
+            <i class="fa-solid fa-circle-check text-emerald-400 text-3xl mb-2"></i>
+            <h4 class="text-base font-bold text-white">此車位目前空閒</h4>
+            <p class="text-xs text-slate-400 mt-1">隨時可插入充電槍並辦理 Check-In</p>
+          </div>
+        `;
+      }
+
+      // Populate Queue list
+      const queueList = document.getElementById('actionQueueList');
+      const queueCount = document.getElementById('actionQueueCount');
+      queueCount.textContent = state.queue ? state.queue.length : 0;
+      queueList.innerHTML = '';
+
+      if (hasQueue) {
+        state.queue.forEach((q, idx) => {
+          const item = document.createElement('div');
+          item.className = 'bg-slate-900/80 p-2.5 rounded-lg border border-slate-700/60 flex items-center justify-between text-xs';
+          item.innerHTML = `
+            <div class="flex items-center gap-2">
+              <span class="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 font-bold flex items-center justify-center text-[11px]">${idx + 1}</span>
+              <div>
+                <span class="font-bold text-white">${q.user.name}</span>
+                <span class="text-slate-400 font-mono-num ml-1">${q.user.phone}</span>
+                <div class="text-[10px] text-slate-400">預計充至: ${q.expectedEndTime} ${q.note ? '· ' + q.note : ''}</div>
+              </div>
+            </div>
+            ${isAdmin ? `<button onclick="adminRemoveQueueItem('${spotId}', ${idx})" class="text-rose-400 hover:text-rose-300 text-xs px-2 py-1"><i class="fa-solid fa-trash-can"></i> 移除</button>` : ''}
+          `;
+          queueList.appendChild(item);
+        });
+      } else {
+        queueList.innerHTML = `<p class="text-xs text-slate-500 py-2 text-center">目前無人排隊候補</p>`;
+      }
+
+      // Action Buttons Rendering
+      const btnContainer = document.getElementById('actionButtonContainer');
+      btnContainer.innerHTML = '';
+
+      // Case 1: SPOT IS FREE -> User can Check-In directly
+      if (isFree) {
+        const checkInBtn = document.createElement('button');
+        checkInBtn.className = 'w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm rounded-xl transition shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2';
+        checkInBtn.innerHTML = `<i class="fa-solid fa-plug-circle-bolt"></i> 我要 Check In (開始充電)`;
+        checkInBtn.onclick = () => {
+          closeModal('spotActionModal');
+          openCheckInModal(spotId);
+        };
+        btnContainer.appendChild(checkInBtn);
+      }
+
+      // Case 2: SPOT IS CHARGING
+      if (isCharging) {
+        // Requirement 6: "每個停車位要check out下一個才能check in但下一個人可以把上一個人check out"
+        // Button A: Direct Check-Out
+        const checkOutBtn = document.createElement('button');
+        checkOutBtn.className = 'w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-rose-300 font-bold text-xs sm:text-sm rounded-xl transition flex items-center justify-center gap-2';
+        checkOutBtn.innerHTML = `<i class="fa-solid fa-arrow-right-from-bracket"></i> 結束充電並 Check Out (移開車輛)`;
+        checkOutBtn.onclick = () => handleCheckOut(spotId);
+        btnContainer.appendChild(checkOutBtn);
+
+        // Button B: Handover Check-In (下一個人可以把上一個人 check out 並立即換自己 check in)
+        const handoverBtn = document.createElement('button');
+        handoverBtn.className = 'w-full py-3 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white font-bold text-sm rounded-xl transition shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2';
+        handoverBtn.innerHTML = `<i class="fa-solid fa-people-arrows"></i> 交換位置：我已到現場接續 (將前人 Check Out 並由我 Check In)`;
+        handoverBtn.onclick = () => {
+          if (!confirm(`確認要結束前一位車主 (${state.currentUser.name}) 的充電，並立刻由您接續開始充電嗎？`)) return;
+          closeModal('spotActionModal');
+          openCheckInModal(spotId, true);
+        };
+        btnContainer.appendChild(handoverBtn);
+
+        // Button C: Queue up for next
+        const queueBtn = document.createElement('button');
+        queueBtn.className = 'w-full py-2.5 bg-amber-600/90 hover:bg-amber-600 text-white font-bold text-sm rounded-xl transition shadow-md shadow-amber-600/20 flex items-center justify-center gap-2';
+        queueBtn.innerHTML = `<i class="fa-regular fa-clock"></i> 我要排隊候補 (預約下一位交換)`;
+        queueBtn.onclick = () => {
+          closeModal('spotActionModal');
+          openQueueModal(spotId);
+        };
+        btnContainer.appendChild(queueBtn);
+      }
+
+      // Admin Edit button
+      if (isAdmin) {
+        const adminBtn = document.createElement('button');
+        adminBtn.className = 'w-full py-2 bg-amber-900/60 hover:bg-amber-800 text-amber-200 border border-amber-600/50 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 mt-1';
+        adminBtn.innerHTML = `<i class="fa-solid fa-shield-halved"></i> 管理員編輯此車位資料`;
+        adminBtn.onclick = () => {
+          closeModal('spotActionModal');
+          openAdminEditModal(spotId);
+        };
+        btnContainer.appendChild(adminBtn);
+      }
+
+      openModal('spotActionModal');
+    }
+
+    // --- Check In Flow ---
+    function openCheckInModal(spotId, isHandover = false) {
+      if (!currentUser) {
+        alert('請先建立或選擇您的使用者資料！');
+        openModal('userSelectModal');
+        return;
+      }
+
+      document.getElementById('checkInSpotId').value = spotId;
+      document.getElementById('checkInSpotName').textContent = spotId;
+
+      const now = new Date();
+      const checkInDateEl = document.getElementById('checkInDate');
+      checkInDateEl.value = now.toISOString().split('T')[0];
+
+      // Next +2 hour default
+      const defaultHour = (now.getHours() + 2) % 24;
+      document.getElementById('checkInTimeSelect').value = `${String(defaultHour).padStart(2,'0')}:00`;
+
+      openModal('checkInModal');
+    }
+
+    function handleCheckInSubmit(e) {
+      e.preventDefault();
+      const spotId = document.getElementById('checkInSpotId').value;
+      const date = document.getElementById('checkInDate').value;
+      const time = document.getElementById('checkInTimeSelect').value;
+      const note = document.getElementById('checkInNote').value.trim();
+
+      if (!date || !time) {
+        alert('請選擇預計結束充電的日期與時間');
+        return;
+      }
+
+      const fullEndTime = `${date} ${time}`;
+      const nowStr = new Date().toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' }) + ' ' + 
+                     new Date().toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
+
+      // If user was in queue for this spot, remove them from queue
+      let queue = spotsState[spotId]?.queue || [];
+      queue = queue.filter(q => !(q.user.phone === currentUser.phone));
+
+      spotsState[spotId] = {
+        status: 'charging',
+        currentUser: currentUser,
+        startTime: nowStr,
+        expectedEndTime: fullEndTime,
+        note: note,
+        queue: queue
+      };
+
+      saveSpots();
+      closeModal('checkInModal');
+      showToast(`成功 Check In 車位 ${spotId}！`);
+    }
+
+    // --- Check Out Flow ---
+    function handleCheckOut(spotId) {
+      const state = spotsState[spotId];
+      if (!state) return;
+
+      if (!confirm(`確定要將【${spotId}】辦理 Check Out 移開車輛嗎？`)) return;
+
+      // Check if there is queue
+      if (state.queue && state.queue.length > 0) {
+        const nextInLine = state.queue[0];
+        const wantHandover = confirm(`【${spotId}】隊列中已有排隊者：${nextInLine.user.name} (${nextInLine.user.phone})\n\n是否直接交接通知下一位，並讓下一位自動接續 Check In？`);
+        
+        if (wantHandover) {
+          state.currentUser = nextInLine.user;
+          state.expectedEndTime = nextInLine.expectedEndTime;
+          state.startTime = new Date().toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
+          state.note = nextInLine.note || '';
+          state.queue.shift(); // Remove first from queue
+          saveSpots();
+          closeModal('spotActionModal');
+          showToast(`已交接給下一位車主：${nextInLine.user.name}！`);
+          return;
+        }
+      }
+
+      // Plain Check Out
+      spotsState[spotId] = {
+        status: 'free',
+        currentUser: null,
+        startTime: null,
+        expectedEndTime: null,
+        note: '',
+        queue: state.queue || []
+      };
+
+      saveSpots();
+      closeModal('spotActionModal');
+      showToast(`車位 ${spotId} 已順利 Check Out！`);
+    }
+
+    // --- Queue Reservation Flow ---
+    function openQueueModal(spotId) {
+      if (!currentUser) {
+        alert('請先建立或選擇您的使用者資料！');
+        openModal('userSelectModal');
+        return;
+      }
+
+      const state = spotsState[spotId];
+      document.getElementById('queueSpotId').value = spotId;
+      document.getElementById('queueSpotName').textContent = spotId;
+      document.getElementById('queueSpotCurrentHolder').textContent = state.currentUser ? state.currentUser.name : '無';
+      document.getElementById('queueSpotCurrentPhone').textContent = state.currentUser ? state.currentUser.phone : '無';
+      document.getElementById('queueSpotEndTime').textContent = `預計至: ${state.expectedEndTime || '未定'}`;
+
+      const today = new Date().toISOString().split('T')[0];
+      document.getElementById('queueEndDate').value = today;
+
+      openModal('queueModal');
+    }
+
+    function handleQueueSubmit(e) {
+      e.preventDefault();
+      const spotId = document.getElementById('queueSpotId').value;
+      const date = document.getElementById('queueEndDate').value;
+      const time = document.getElementById('queueEndTimeSelect').value;
+      const note = document.getElementById('queueNote').value.trim();
+
+      if (!date || !time) {
+        alert('請填寫預計交換結束時間');
+        return;
+      }
+
+      const state = spotsState[spotId];
+      if (!state.queue) state.queue = [];
+
+      const exist = state.queue.find(q => q.user.phone === currentUser.phone);
+      if (exist) {
+        alert('您已經在此車位的排隊名單中囉！');
+        return;
+      }
+
+      state.queue.push({
+        user: currentUser,
+        expectedEndTime: `${date} ${time}`,
+        note: note,
+        createdAt: new Date().toLocaleTimeString('zh-TW', { hour12: false })
+      });
+
+      saveSpots();
+      closeModal('queueModal');
+      showToast(`排隊預約成功！目前順位：第 ${state.queue.length} 位`);
+    }
+
+    // --- Admin Functions ---
+    function toggleAdminPrompt() {
+      if (isAdmin) {
+        exitAdmin();
+      } else {
+        openModal('adminPinModal');
+      }
+    }
+
+    function handleAdminLogin(e) {
+      e.preventDefault();
+      const pin = document.getElementById('adminPinInput').value.trim();
+      if (pin === '8888') {
+        isAdmin = true;
+        document.getElementById('adminBtn').className = 'px-3 py-1.5 rounded-lg bg-amber-500 text-slate-900 font-bold text-xs sm:text-sm flex items-center gap-1.5 transition shadow-lg shadow-amber-500/20';
+        document.getElementById('adminBtnText').textContent = '管理員 (已啟用)';
+        document.getElementById('adminBanner').classList.remove('hidden');
+        closeModal('adminPinModal');
+        document.getElementById('adminPinInput').value = '';
+        renderFloor();
+        renderAdminUserRoster();
+        showToast('管理員登入成功！已解鎖所有車位編輯與車主管理權限');
+      } else {
+        alert('管理密碼錯誤！(預設為 8888)');
+      }
+    }
+
+    function exitAdmin() {
+      isAdmin = false;
+      document.getElementById('adminBtn').className = 'px-3 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 text-xs sm:text-sm font-medium flex items-center gap-1.5 transition';
+      document.getElementById('adminBtnText').textContent = '管理員登入';
+      document.getElementById('adminBanner').classList.add('hidden');
+      renderFloor();
+      showToast('已退出管理員模式');
+    }
+
+    function openAdminEditModal(spotId) {
+      document.getElementById('adminEditSpotId').textContent = spotId;
+      const state = spotsState[spotId] || { status: 'free' };
+
+      document.getElementById('adminSpotStatus').value = state.status;
+      document.getElementById('adminEditUserName').value = state.currentUser ? state.currentUser.name : '';
+      document.getElementById('adminEditUserPhone').value = state.currentUser ? state.currentUser.phone : '';
+      
+      if (state.expectedEndTime) {
+        const parts = state.expectedEndTime.split(' ');
+        if (parts[0]) document.getElementById('adminEditDate').value = parts[0];
+        if (parts[1]) document.getElementById('adminEditTime').value = parts[1];
+      }
+      document.getElementById('adminEditNote').value = state.note || '';
+
+      openModal('adminSpotEditModal');
+    }
+
+    function handleAdminSpotSave(e) {
+      e.preventDefault();
+      const spotId = document.getElementById('adminEditSpotId').textContent;
+      const status = document.getElementById('adminSpotStatus').value;
+      const name = document.getElementById('adminEditUserName').value.trim();
+      const phone = document.getElementById('adminEditUserPhone').value.trim();
+      const date = document.getElementById('adminEditDate').value;
+      const time = document.getElementById('adminEditTime').value;
+      const note = document.getElementById('adminEditNote').value.trim();
+
+      const state = spotsState[spotId] || { queue: [] };
+      state.status = status;
+
+      if (status === 'charging') {
+        state.currentUser = { name: name || '管理員指定', phone: phone || '未留' };
+        state.expectedEndTime = date && time ? `${date} ${time}` : '';
+        state.note = note;
+      } else if (status === 'free') {
+        state.currentUser = null;
+        state.expectedEndTime = null;
+        state.note = '';
+      }
+
+      saveSpots();
+      closeModal('adminSpotEditModal');
+      showToast(`管理員已更新車位 ${spotId} 資料！`);
+    }
+
+    function adminForceResetSpot() {
+      const spotId = document.getElementById('adminEditSpotId').textContent;
+      if (!confirm(`確定要強制清空車位【${spotId}】的充電與排隊資料嗎？`)) return;
+
+      spotsState[spotId] = {
+        status: 'free',
+        currentUser: null,
+        startTime: null,
+        expectedEndTime: null,
+        note: '',
+        queue: []
+      };
+
+      saveSpots();
+      closeModal('adminSpotEditModal');
+      showToast(`車位 ${spotId} 已完全清空重置！`);
+    }
+
+    function adminRemoveQueueItem(spotId, idx) {
+      if (!confirm('確定要從排隊候補清單中移除此車主嗎？')) return;
+      spotsState[spotId].queue.splice(idx, 1);
+      saveSpots();
+      openSpotAction(spotId);
+    }
+
+    // --- Admin User Management Functions ---
+    function renderAdminUserRoster() {
+      const container = document.getElementById('adminUserList');
+      const countEl = document.getElementById('adminUserCount');
+      if (!container) return;
+
+      countEl.textContent = usersDatabase.length;
+      container.innerHTML = '';
+
+      if (usersDatabase.length === 0) {
+        container.innerHTML = `<p class="text-xs text-slate-500 py-3 text-center">目前尚無登記車主</p>`;
+        return;
+      }
+
+      usersDatabase.forEach((u, idx) => {
+        const item = document.createElement('div');
+        item.className = 'bg-slate-950/80 p-2.5 rounded-lg border border-slate-700 flex items-center justify-between text-xs';
+        item.innerHTML = `
+          <div class="flex items-center gap-2">
+            <div class="w-7 h-7 rounded-full bg-slate-800 text-amber-400 flex items-center justify-center font-bold text-xs border border-slate-700">
+              <i class="fa-solid fa-user text-[11px]"></i>
+            </div>
+            <div>
+              <div class="font-bold text-white flex items-center gap-2">
+                ${u.name}
+                ${u.plate ? `<span class="bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded text-[10px] font-mono">${u.plate}</span>` : ''}
+              </div>
+              <div class="text-[11px] text-slate-400 font-mono-num">${u.phone}</div>
+            </div>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button onclick="adminSelectUserAsActive(${idx})" class="px-2 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded text-[11px] transition">
+              設為當前
+            </button>
+            <button onclick="adminDeleteUser(${idx})" class="px-2 py-1 bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 border border-rose-500/30 rounded text-[11px] transition" title="刪除此車主">
+              <i class="fa-solid fa-trash-can"></i>
+            </button>
+          </div>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    function handleAdminCreateUser(e) {
+      e.preventDefault();
+      const name = document.getElementById('adminNewUserName').value.trim();
+      const phone = document.getElementById('adminNewUserPhone').value.trim();
+      const plate = document.getElementById('adminNewUserPlate').value.trim();
+
+      if (!name || !phone) {
+        alert('請填寫姓名與電話');
+        return;
+      }
+
+      let existing = usersDatabase.find(u => u.phone === phone);
+      if (existing) {
+        existing.name = name;
+        existing.plate = plate;
+      } else {
+        usersDatabase.push({ name, phone, plate });
+      }
+
+      saveUsers();
+      renderAdminUserRoster();
+      document.getElementById('adminNewUserName').value = '';
+      document.getElementById('adminNewUserPhone').value = '';
+      document.getElementById('adminNewUserPlate').value = '';
+      showToast(`管理員已成功建立車主：${name}！`);
+    }
+
+    function adminDeleteUser(idx) {
+      const target = usersDatabase[idx];
+      if (!confirm(`確定要從資料庫刪除車主【${target.name}】嗎？`)) return;
+
+      usersDatabase.splice(idx, 1);
+      if (currentUser && currentUser.phone === target.phone) {
+        currentUser = usersDatabase.length > 0 ? usersDatabase[0] : null;
+        localStorage.setItem('ev_active_user', JSON.stringify(currentUser));
+      }
+
+      saveUsers();
+      renderAdminUserRoster();
+      showToast(`已刪除車主：${target.name}`);
+    }
+
+    function adminSelectUserAsActive(idx) {
+      currentUser = usersDatabase[idx];
+      localStorage.setItem('ev_active_user', JSON.stringify(currentUser));
+      updateUserUI();
+      closeModal('adminUserManageModal');
+      showToast(`已將目前車主設為：${currentUser.name}`);
+    }
+
+    // --- QR Code Generator ---
+    let qrcodeInstance = null;
+    let customBaseUrl = '';
+
+    function initQRCode() {
+      const container = document.getElementById('qrcodeCanvas');
+      if (!container) return;
+      container.innerHTML = '';
+
+      let targetUrl = '';
+      if (customBaseUrl) {
+        const u = new URL(customBaseUrl);
+        u.searchParams.set('floor', currentFloor);
+        targetUrl = u.toString();
+      } else if (window.location.protocol === 'file:') {
+        // Warning: file:// protocol cannot be accessed by external phones
+        const warningEl = document.getElementById('fileProtocolWarning');
+        if (warningEl) warningEl.classList.remove('hidden');
+        
+        // Suggest LAN IP
+        const suggestedUrl = `http://17.92.221.93:8000/?floor=${currentFloor}`;
+        targetUrl = suggestedUrl;
+        const inputEl = document.getElementById('customQrUrlInput');
+        if (inputEl && !inputEl.value) inputEl.value = 'http://17.92.221.93:8000';
+      } else {
+        const currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.set('floor', currentFloor);
+        targetUrl = currentUrl.toString();
+      }
+
+      const textEl = document.getElementById('qrCurrentUrlText');
+      if (textEl) textEl.textContent = targetUrl;
+
+      qrcodeInstance = new QRCode(container, {
+        text: targetUrl,
+        width: 190,
+        height: 190,
+        colorDark: "#0f172a",
+        colorLight: "#ffffff",
+        correctLevel: QRCode.CorrectLevel.M
+      });
+    }
+
+    function updateCustomQrCode() {
+      const input = document.getElementById('customQrUrlInput').value.trim();
+      if (!input) {
+        alert('請輸入有效網址');
+        return;
+      }
+      try {
+        let validUrl = input;
+        if (!validUrl.startsWith('http://') && !validUrl.startsWith('https://')) {
+          validUrl = 'http://' + validUrl;
+        }
+        new URL(validUrl); // validate format
+        customBaseUrl = validUrl;
+        initQRCode();
+        showToast('已更新 QR Code 連結網址！');
+      } catch (err) {
+        alert('網址格式不正確，請包含 http:// 或 https://');
+      }
+    }
+
+    function copyCurrentUrl() {
+      const url = document.getElementById('qrCurrentUrlText').textContent;
+      navigator.clipboard.writeText(url).then(() => {
+        showToast('已複製網址到剪貼簿！');
+      });
+    }
+
+    function printQr() {
+      window.print();
+    }
+
+    // --- Toast & Modal Helpers ---
+    function openModal(id) {
+      document.getElementById(id).classList.remove('hidden');
+    }
+
+    function closeModal(id) {
+      document.getElementById(id).classList.add('hidden');
+    }
+
+    function showToast(msg) {
+      const toast = document.createElement('div');
+      toast.className = 'fixed bottom-5 right-5 z-50 bg-slate-800 text-white border border-emerald-500/50 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2 text-sm transform transition-all duration-300 translate-y-10 opacity-0';
+      toast.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-400"></i> <span>${msg}</span>`;
+      document.body.appendChild(toast);
+
+      setTimeout(() => {
+        toast.classList.remove('translate-y-10', 'opacity-0');
+      }, 50);
+
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-10');
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    // Close modals on ESC
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.querySelectorAll('.fixed').forEach(m => m.classList.add('hidden'));
+      }
+    });
+
+    // Auto refresh periodically to sync clock and statuses
+    setInterval(() => {
+      updateStats();
+    }, 30000);
+
+    // --- Autonomous Zero-Config Cloud Sync Engine (WebRTC + Mesh Relay) ---
+    // Anyone who opens the page connects to the shared EV room automatically
+    const CLOUD_ROOM_ID = 'ev-hub-jason-tw-ly-2026';
+    let myPeer = null;
+    let peerConnections = [];
+    let isSyncHub = false;
+
+    function initCloudSync() {
+      if (typeof Peer === 'undefined') {
+        updateSyncBadge('error', '離線 (未加載組件)');
+        return;
+      }
+
+      updateSyncBadge('connecting', '同步連接中...');
+
+      // First attempt to be the primary Host for the shared Room
+      try {
+        myPeer = new Peer(CLOUD_ROOM_ID, {
+          debug: 1,
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+          }
+        });
+
+        myPeer.on('open', (id) => {
+          isSyncHub = true;
+          updateSyncBadge('connected', '已連線 (主節點)');
+          setupHubListeners();
+        });
+
+        myPeer.on('error', (err) => {
+          if (err.type === 'unavailable-id') {
+            // Room Host ID already taken by someone's phone/browser -> Connect as Client
+            joinAsClient();
+          } else {
+            console.warn('Sync connection info:', err);
+            updateSyncBadge('connected', '本機就緒');
+          }
+        });
+      } catch (e) {
+        joinAsClient();
+      }
+    }
+
+    // Scenario A: This device is the Hub -> Accepts incoming client connections & distributes updates
+    function setupHubListeners() {
+      myPeer.on('connection', (conn) => {
+        peerConnections.push(conn);
+        conn.on('open', () => {
+          // Immediately send current live data to the newly connected phone
+          conn.send({
+            type: 'FULL_SYNC',
+            version: lastDataVersion,
+            spots: spotsState,
+            users: usersDatabase
+          });
+        });
+
+        conn.on('data', (payload) => {
+          handleIncomingSync(payload, conn);
+        });
+
+        conn.on('close', () => {
+          peerConnections = peerConnections.filter(c => c !== conn);
+        });
+      });
+    }
+
+    // Scenario B: This device connects to the active Hub device
+    function joinAsClient() {
+      // Create random client peer id
+      myPeer = new Peer({
+        debug: 1,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        }
+      });
+
+      myPeer.on('open', () => {
+        connectToHub();
+      });
+
+      myPeer.on('error', (err) => {
+        console.warn('Peer error:', err);
+        updateSyncBadge('connected', '本機就緒');
+      });
+    }
+
+    function connectToHub() {
+      const conn = myPeer.connect(CLOUD_ROOM_ID, { reliable: true });
+      peerConnections = [conn];
+
+      conn.on('open', () => {
+        isSyncHub = false;
+        updateSyncBadge('connected', '即時同步中');
+        // Request latest data
+        conn.send({ type: 'REQ_SYNC', version: lastDataVersion });
+      });
+
+      conn.on('data', (payload) => {
+        handleIncomingSync(payload, conn);
+      });
+
+      conn.on('close', () => {
+        updateSyncBadge('connecting', '重新同步...');
+        setTimeout(initCloudSync, 2000); // If host closed, retry to become host or find new host
+      });
+
+      conn.on('error', () => {
+        updateSyncBadge('connected', '本機運作中');
+      });
+    }
+
+    // Handle Incoming Sync Packet from another phone
+    function handleIncomingSync(payload, senderConn) {
+      if (!payload || !payload.type) return;
+
+      if (payload.type === 'FULL_SYNC' || payload.type === 'UPDATE') {
+        const incomingVersion = payload.version || 0;
+        if (incomingVersion >= lastDataVersion) {
+          lastDataVersion = incomingVersion;
+          if (payload.spots) spotsState = payload.spots;
+          if (payload.users) usersDatabase = payload.users;
+
+          // Silent update without re-broadcasting loop
+          localStorage.setItem('ev_spots_state', JSON.stringify(spotsState));
+          localStorage.setItem('ev_users_db', JSON.stringify(usersDatabase));
+          localStorage.setItem('ev_data_version', String(lastDataVersion));
+
+          renderFloor();
+          renderQueueTable();
+          updateStats();
+          updateUserUI();
+          if (typeof renderAdminUserRoster === 'function') {
+            renderAdminUserRoster();
+          }
+          showToast('車位狀態已即時同步更新！');
+        }
+
+        // If I am Hub, relay this change to all other connected phones
+        if (isSyncHub) {
+          peerConnections.forEach(c => {
+            if (c !== senderConn && c.open) {
+              c.send(payload);
+            }
+          });
+        }
+      } else if (payload.type === 'REQ_SYNC') {
+        // Send back our current state if we have it
+        senderConn.send({
+          type: 'FULL_SYNC',
+          version: lastDataVersion,
+          spots: spotsState,
+          users: usersDatabase
+        });
+      }
+    }
+
+    // Broadcast change to all connected devices when CheckIn/Out/Queue happens
+    function broadcastCloudData() {
+      const packet = {
+        type: 'UPDATE',
+        version: lastDataVersion,
+        spots: spotsState,
+        users: usersDatabase
+      };
+
+      peerConnections.forEach(conn => {
+        if (conn && conn.open) {
+          try {
+            conn.send(packet);
+          } catch (e) {
+            console.warn('Sync send fail', e);
+          }
+        }
+      });
+    }
+
+    function updateSyncBadge(status, text) {
+      const badge = document.getElementById('syncStatusBadge');
+      const dot = document.getElementById('syncStatusDot');
+      const txt = document.getElementById('syncStatusText');
+      if (!badge || !dot || !txt) return;
+
+      txt.textContent = text;
+      if (status === 'connected') {
+        dot.className = 'w-2 h-2 rounded-full bg-emerald-400';
+        badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/40 border border-emerald-500/40 text-xs text-emerald-300';
+      } else if (status === 'connecting') {
+        dot.className = 'w-2 h-2 rounded-full bg-amber-400 animate-pulse';
+        badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-950/40 border border-amber-500/40 text-xs text-amber-300';
+      } else {
+        dot.className = 'w-2 h-2 rounded-full bg-slate-500';
+        badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-850 border border-slate-700 text-xs text-slate-400';
+      }
+    }
+
+    // Initialize application on load
+    window.onload = () => {
+      initData();
+      initCloudSync();
+    };
+  </script>
+</body>
+</html>
