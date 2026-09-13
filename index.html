@@ -1496,11 +1496,30 @@
       openModal('spotActionModal');
     }
 
+    // Helper: Check if a user is currently charging in ANY spot
+    function findUserActiveChargingSpot(userPhone) {
+      if (!userPhone) return null;
+      for (const spotId in spotsState) {
+        const spot = spotsState[spotId];
+        if (spot.status === 'charging' && spot.currentUser && spot.currentUser.phone === userPhone) {
+          return spotId;
+        }
+      }
+      return null;
+    }
+
     // --- Check In Flow ---
     function openCheckInModal(spotId, isHandover = false) {
       if (!currentUser) {
         alert('請先建立或選擇您的使用者資料！');
         openModal('userSelectModal');
+        return;
+      }
+
+      // Requirement: Prevent same user from checking in multiple spots simultaneously
+      const alreadyChargingSpot = findUserActiveChargingSpot(currentUser.phone);
+      if (alreadyChargingSpot && alreadyChargingSpot !== spotId) {
+        alert(`【限制提醒】車主 ${currentUser.name} 目前已在車位【${alreadyChargingSpot}】充電中！\n每位車主同一時間僅能 Check In 一個車位。請先將原車位 Check Out 後再進行登記。`);
         return;
       }
 
@@ -1527,6 +1546,14 @@
     function handleCheckInSubmit(e) {
       e.preventDefault();
       const spotId = document.getElementById('checkInSpotId').value;
+
+      // Double check constraint: Prevent same user from checking in multiple spots
+      const alreadyChargingSpot = findUserActiveChargingSpot(currentUser.phone);
+      if (alreadyChargingSpot && alreadyChargingSpot !== spotId) {
+        alert(`【限制提醒】車主 ${currentUser.name} 目前已在車位【${alreadyChargingSpot}】充電中！\n每位車主同一時間僅能 Check In 一個車位。`);
+        return;
+      }
+
       const date = document.getElementById('checkInDate').value || new Date().toISOString().split('T')[0];
       const hour = document.getElementById('checkInHourSelect').value;
       const minute = document.getElementById('checkInMinuteSelect').value;
@@ -1771,6 +1798,15 @@
         if (selectedDt <= now) {
           alert(`預計結束時間 (${fullEndTime}) 不能早於或等於現在時間！\n請選擇未來的時間。`);
           return;
+        }
+
+        // Check if this phone is already charging in another spot
+        if (phone) {
+          const alreadyCharging = findUserActiveChargingSpot(phone);
+          if (alreadyCharging && alreadyCharging !== spotId) {
+            alert(`【限制提醒】車主電話 (${phone}) 目前已在車位【${alreadyCharging}】充電中！\n每位車主同一時間僅能佔用一個充電位。`);
+            return;
+          }
         }
       }
 
