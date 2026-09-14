@@ -723,32 +723,29 @@
       </div>
 
       <div class="space-y-4 text-xs text-slate-300">
-        <!-- Quick Manual Sync Button -->
+        <!-- Sync Status & Manual Refresh -->
         <div class="bg-slate-900/80 p-3.5 rounded-xl border border-slate-700 space-y-2">
           <div class="flex items-center justify-between">
-            <span class="font-bold text-white">同步狀態：</span>
-            <span id="modalSyncStatusIndicator" class="text-emerald-400 font-bold">連線正常 (自動同步中)</span>
+            <span class="font-bold text-white">目前同步狀態：</span>
+            <span id="modalSyncStatusIndicator" class="text-emerald-400 font-bold">連線中...</span>
           </div>
           <p class="text-[11px] text-slate-400">
-            只要手機有網路，當前車位與排隊進度會自動以每 3 秒週期與雲端同步。
+            已連線至專屬雲端資料庫，任何人 Check In / Check Out 時，所有裝置畫面會即時自動更新。
           </p>
-          <button onclick="fetchCloudData(true)" class="w-full py-2 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded-lg font-bold transition flex items-center justify-center gap-1.5">
+          <button onclick="forceCloudRefresh()" class="w-full py-2 bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 rounded-lg font-bold transition flex items-center justify-center gap-1.5">
             <i class="fa-solid fa-rotate"></i> 立即手動抓取最新車位資料
           </button>
         </div>
 
-        <!-- Optional custom sync channel -->
-        <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-700 space-y-2">
-          <label class="block font-bold text-slate-300">自訂雲端同步金鑰 / 頻道 (選填)：</label>
-          <div class="flex gap-2">
-            <input type="text" id="syncBinIdInput" placeholder="預設公共同步頻道" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-emerald-400 font-mono focus:outline-none focus:border-emerald-500">
-            <button onclick="saveCustomBinId()" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs font-bold transition whitespace-nowrap">
-              儲存
-            </button>
-          </div>
-          <p class="text-[11px] text-slate-500">
-            一般使用無需更動此欄位，系統已內建專屬頻道自動同步。
-          </p>
+        <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-700 text-[11px] space-y-1 text-slate-400">
+          <span class="font-bold text-slate-200 block text-xs">🔍 若顯示紅色「規則需設測試模式」：</span>
+          <p>請至 Firebase Console ➔ Realtime Database ➔ <strong>「規則 (Rules)」</strong> 分頁，將內容改為下方後按「發布」：</p>
+          <pre class="bg-slate-950 p-2 rounded-lg text-emerald-400 font-mono text-[10px] overflow-x-auto mt-1">{
+  "rules": {
+    ".read": true,
+    ".write": true
+  }
+}</pre>
         </div>
 
         <button onclick="closeModal('cloudConfigModal')" class="w-full py-2.5 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl transition">
@@ -757,6 +754,9 @@
       </div>
     </div>
   </div>
+
+  <!-- 8. ADMIN USER MANAGEMENT & CREATION MODAL -->
+  <div id="adminUserManageModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
     <div class="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
       <button onclick="closeModal('adminUserManageModal')" class="absolute top-4 right-4 text-slate-400 hover:text-white">
         <i class="fa-solid fa-xmark text-lg"></i>
@@ -919,33 +919,14 @@
           });
         });
 
-        // Add 2 realistic active examples
-        spotsState['LY1B1-04'] = {
-          status: 'charging',
-          currentUser: usersDatabase[0],
-          startTime: `${todayStr} 09:00`,
-          expectedEndTime: `${todayStr} 12:00`,
-          note: '充至 80% 可拔槍',
-          queue: [
-            {
-              user: usersDatabase[1],
-              expectedEndTime: `${todayStr} 15:30`,
-              note: '在辦公室，換我時請撥手機',
-              createdAt: `${todayStr} 09:30`
-            }
-          ]
-        };
-
-        spotsState['LY3B1-01'] = {
-          status: 'charging',
-          currentUser: usersDatabase[2],
-          startTime: `${todayStr} 10:00`,
-          expectedEndTime: `${todayStr} 13:30`,
-          note: '中午前移車',
-          queue: []
-        };
-
+        // All spots start as free (real production baseline)
         localStorage.setItem('ev_spots_state', JSON.stringify(spotsState));
+      }
+
+      // Restore last known data version to correctly compare with cloud data
+      const savedVersion = localStorage.getItem('ev_data_version');
+      if (savedVersion) {
+        lastDataVersion = parseInt(savedVersion) || 0;
       }
 
       // Ensure newly added spots (like LY3B1-05, LY3B1-07) are initialized if loaded from older localStorage
@@ -2132,160 +2113,137 @@
       updateStats();
     }, 30000);
 
-    // --- Real-Time Cloud Engine: Autonomous Zero-Config Cloud Sync (Direct JSON Storage) ---
-    // Uses a dedicated global cloud channel without requiring third-party accounts or manual database setup
-    const SYNC_SERVICE_BASE = 'https://api.jsonbin.io/v3/b';
-    const DEFAULT_BIN_ID = '67d15664ad19ca34f815801c'; // Pre-configured shared room for LY1/LY3
-    let activeBinId = localStorage.getItem('ev_custom_bin_id') || DEFAULT_BIN_ID;
-    let isFetchingCloud = false;
-    let isPushingCloud = false;
-    let syncIntervalTimer = null;
+    // --- Real-Time Cloud Engine: Firebase Realtime Database (Hardcoded & Ready) ---
+    const FIREBASE_DB_URL = 'https://ttcev-2e202-default-rtdb.asia-southeast1.firebasedatabase.app';
+    let firebaseDbRef = null;
+    let isRemoteUpdate = false;
 
     function initCloudSync() {
-      const inputEl = document.getElementById('syncBinIdInput');
-      if (inputEl) inputEl.value = activeBinId;
+      if (typeof firebase === 'undefined') {
+        updateSyncBadge('error', '同步元件載入失敗');
+        return;
+      }
 
-      updateSyncBadge('connected', '即時同步已啟動');
-
-      // 1. Immediately fetch latest state upon opening the web page
-      fetchCloudData(false);
-
-      // 2. Continuous background sync polling every 3.5 seconds
-      if (syncIntervalTimer) clearInterval(syncIntervalTimer);
-      syncIntervalTimer = setInterval(() => {
-        if (!isPushingCloud) {
-          fetchCloudData(false);
-        }
-      }, 3500);
-    }
-
-    // Fetch latest cloud state
-    async function fetchCloudData(isManual = false) {
-      if (isFetchingCloud) return;
-      isFetchingCloud = true;
+      updateSyncBadge('connecting', '雲端連線中...');
 
       try {
-        const res = await fetch(`https://api.jsonstorage.net/v1/json/ev-charging-hub-tw-2026`, {
-          cache: 'no-store'
-        });
-
-        if (res.ok) {
-          const json = await res.json();
-          if (json && json.record) {
-            applyIncomingCloudData(json.record, isManual);
-          }
+        if (!firebase.apps.length) {
+          firebase.initializeApp({ databaseURL: FIREBASE_DB_URL });
         }
-      } catch (err) {
-        // Fallback to secondary fast global channel
-        try {
-          const res2 = await fetch(`https://kvdb.io/S3V57N75d8x8v5u5s6x9z8/ev_hub_state?t=${Date.now()}`, {
-            cache: 'no-store'
-          });
-          if (res2.ok) {
-            const json2 = await res2.json();
-            if (json2) {
-              applyIncomingCloudData(json2, isManual);
+        firebaseDbRef = firebase.database().ref('ev_parking_system');
+
+        // Real-time listener: fires instantly whenever ANY device writes new data
+        firebaseDbRef.on('value', (snapshot) => {
+          const val = snapshot.val();
+
+          if (!val) {
+            // Cloud is empty on first ever run: upload current local state as baseline
+            lastDataVersion = Date.now();
+            broadcastCloudData();
+            updateSyncBadge('connected', '雲端即時同步中');
+            return;
+          }
+
+          const incomingVersion = val.version || 0;
+          if (incomingVersion > lastDataVersion) {
+            isRemoteUpdate = true;
+            lastDataVersion = incomingVersion;
+
+            spotsState = val.spots ? JSON.parse(val.spots) : spotsState;
+            usersDatabase = val.users ? JSON.parse(val.users) : usersDatabase;
+
+            localStorage.setItem('ev_spots_state', JSON.stringify(spotsState));
+            localStorage.setItem('ev_users_db', JSON.stringify(usersDatabase));
+            localStorage.setItem('ev_data_version', String(lastDataVersion));
+
+            renderFloor();
+            renderQueueTable();
+            updateStats();
+            updateUserUI();
+            if (typeof renderAdminUserRoster === 'function') {
+              renderAdminUserRoster();
             }
+            showToast('⚡ 車位狀態已即時同步！');
+            isRemoteUpdate = false;
           }
-        } catch (e2) {
-          // Keep local running
-        }
-      } finally {
-        isFetchingCloud = false;
-      }
-    }
-
-    function applyIncomingCloudData(incomingData, isManual) {
-      const incomingVer = incomingData.version || 0;
-      if (incomingVer > lastDataVersion) {
-        lastDataVersion = incomingVer;
-        if (incomingData.spots) spotsState = incomingData.spots;
-        if (incomingData.users) usersDatabase = incomingData.users;
-
-        localStorage.setItem('ev_spots_state', JSON.stringify(spotsState));
-        localStorage.setItem('ev_users_db', JSON.stringify(usersDatabase));
-        localStorage.setItem('ev_data_version', String(lastDataVersion));
-
-        renderFloor();
-        renderQueueTable();
-        updateStats();
-        updateUserUI();
-        if (typeof renderAdminUserRoster === 'function') {
-          renderAdminUserRoster();
-        }
-        showToast('⚡ 車位狀態已即時同步！');
-      } else if (isManual) {
-        showToast('目前車位資料已是最新！');
-      }
-      updateSyncBadge('connected', '即時同步中');
-    }
-
-    // Push local change to cloud immediately upon any Check-In / Out / Queue action
-    async function broadcastCloudData() {
-      if (isPushingCloud) return;
-      isPushingCloud = true;
-      updateSyncBadge('connecting', '同步推送中...');
-
-      const payload = {
-        version: lastDataVersion,
-        spots: spotsState,
-        users: usersDatabase,
-        updatedAt: new Date().toISOString()
-      };
-
-      try {
-        // Primary Channel
-        await fetch(`https://api.jsonstorage.net/v1/json/ev-charging-hub-tw-2026`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ record: payload })
+          updateSyncBadge('connected', '雲端即時同步中');
+        }, (error) => {
+          console.warn('Firebase read error:', error);
+          updateSyncBadge('error', '規則需設測試模式');
         });
+
       } catch (err) {
-        // Secondary Channel
-        try {
-          await fetch(`https://kvdb.io/S3V57N75d8x8v5u5s6x9z8/ev_hub_state`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-        } catch (e2) {
-          console.warn('Sync broadcast fail', e2);
-        }
-      } finally {
-        isPushingCloud = false;
-        updateSyncBadge('connected', '即時同步中');
+        console.warn('Firebase init error:', err);
+        updateSyncBadge('error', '雲端連線異常');
+      }
+    }
+
+    // Push local change to cloud instantly upon any Check-In / Out / Queue / Admin action
+    function broadcastCloudData() {
+      if (!firebaseDbRef || isRemoteUpdate) return;
+      try {
+        // Stringify nested objects to safely preserve empty arrays/objects in Firebase
+        firebaseDbRef.set({
+          version: lastDataVersion,
+          spots: JSON.stringify(spotsState),
+          users: JSON.stringify(usersDatabase),
+          updatedAt: new Date().toISOString()
+        });
+      } catch (e) {
+        console.warn('Firebase broadcast error:', e);
       }
     }
 
     function handleSyncBadgeClick() {
       openModal('cloudConfigModal');
-      fetchCloudData(true);
+      if (firebaseDbRef) {
+        firebaseDbRef.once('value').then(() => {
+          showToast('已重新抓取雲端最新車位資料！');
+        });
+      }
     }
 
-    function saveCustomBinId() {
-      const val = document.getElementById('syncBinIdInput').value.trim();
-      if (val) {
-        activeBinId = val;
-        localStorage.setItem('ev_custom_bin_id', val);
-        showToast('已更新自訂同步頻道！');
+    function forceCloudRefresh() {
+      if (!firebaseDbRef) {
+        showToast('雲端連線尚未就緒，請稍候...');
+        return;
       }
-      closeModal('cloudConfigModal');
-      fetchCloudData(true);
+      firebaseDbRef.once('value').then((snapshot) => {
+        const val = snapshot.val();
+        if (val && val.version > lastDataVersion) {
+          lastDataVersion = val.version;
+          spotsState = val.spots ? JSON.parse(val.spots) : spotsState;
+          usersDatabase = val.users ? JSON.parse(val.users) : usersDatabase;
+          renderFloor();
+          renderQueueTable();
+          updateStats();
+          updateUserUI();
+          showToast('⚡ 已更新為雲端最新車位資料！');
+        } else {
+          showToast('目前車位資料已是最新！');
+        }
+      });
     }
 
     function updateSyncBadge(status, text) {
       const badge = document.getElementById('syncStatusBadge');
       const dot = document.getElementById('syncStatusDot');
       const txt = document.getElementById('syncStatusText');
+      const modalIndicator = document.getElementById('modalSyncStatusIndicator');
       if (!badge || !dot || !txt) return;
 
       txt.textContent = text;
+      if (modalIndicator) modalIndicator.textContent = text;
+
       if (status === 'connected') {
         dot.className = 'w-2 h-2 rounded-full bg-emerald-400';
         badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-500/50 text-xs text-emerald-300 hover:border-emerald-400 transition cursor-pointer shadow-sm shadow-emerald-500/20';
       } else if (status === 'connecting') {
         dot.className = 'w-2 h-2 rounded-full bg-amber-400 animate-pulse';
         badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-950/50 border border-amber-500/50 text-xs text-amber-300 hover:border-amber-400 transition cursor-pointer';
+      } else if (status === 'error') {
+        dot.className = 'w-2 h-2 rounded-full bg-rose-400 animate-pulse';
+        badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-950/50 border border-rose-500/50 text-xs text-rose-300 hover:border-rose-400 transition cursor-pointer';
       } else {
         dot.className = 'w-2 h-2 rounded-full bg-slate-400';
         badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-300 hover:border-slate-500 transition cursor-pointer';
