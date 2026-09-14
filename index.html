@@ -537,7 +537,7 @@
           </h4>
           <span class="text-[11px] text-slate-400">依序交換充電</span>
         </div>
-        <div id="actionQueueList" class="space-y-2 max-h-40 overflow-y-auto pr-1">
+        <div id="actionQueueList" class="space-y-2 max-h-72 overflow-y-auto pr-1">
           <!-- Dynamically populated queue items -->
         </div>
       </div>
@@ -1351,12 +1351,14 @@
 
           let nextQueueStr = '<span class="text-slate-500">無人排隊</span>';
           if (hasQueue) {
-            const nextU = state.queue[0];
-            nextQueueStr = `<div class="flex items-center gap-1.5 font-medium text-amber-300">
-                              <i class="fa-solid fa-user-clock text-xs"></i>
-                              <span>${nextU.user.name} (${nextU.user.phone})</span>
-                              ${state.queue.length > 1 ? `<span class="text-xs text-slate-400 font-normal">+還有 ${state.queue.length - 1} 人</span>` : ''}
-                            </div>`;
+            const queueItems = state.queue.map((q, i) => `
+              <div class="flex items-center gap-1.5 ${i === 0 ? 'text-amber-300 font-medium' : 'text-slate-400'}">
+                <span class="w-4 h-4 rounded-full ${i === 0 ? 'bg-amber-500/30 text-amber-300' : 'bg-slate-700 text-slate-400'} font-bold flex items-center justify-center text-[9px] flex-shrink-0">${i + 1}</span>
+                <span class="whitespace-nowrap">${q.user.name} (${q.user.phone})</span>
+                <span class="text-[10px] text-slate-500 font-mono-num">至 ${(q.expectedEndTime || '').split(' ')[1] || ''}</span>
+              </div>
+            `).join('');
+            nextQueueStr = `<div class="space-y-1">${queueItems}</div>`;
           }
 
           tr.innerHTML = `
@@ -1470,18 +1472,30 @@
 
       if (hasQueue) {
         state.queue.forEach((q, idx) => {
+          const isMe = currentUser && q.user.phone === currentUser.phone;
           const item = document.createElement('div');
-          item.className = 'bg-slate-900/80 p-2.5 rounded-lg border border-slate-700/60 flex items-center justify-between text-xs';
+          item.className = `p-2.5 rounded-lg border flex items-center justify-between text-xs ${isMe ? 'bg-amber-950/40 border-amber-500/50' : 'bg-slate-900/80 border-slate-700/60'}`;
           item.innerHTML = `
-            <div class="flex items-center gap-2">
-              <span class="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 font-bold flex items-center justify-center text-[11px]">${idx + 1}</span>
-              <div>
-                <span class="font-bold text-white">${q.user.name}</span>
-                <span class="text-slate-400 font-mono-num ml-1">${q.user.phone}</span>
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="w-6 h-6 rounded-full ${idx === 0 ? 'bg-amber-500/30 text-amber-300' : 'bg-slate-700 text-slate-300'} font-bold flex items-center justify-center text-[11px] flex-shrink-0">${idx + 1}</span>
+              <div class="min-w-0">
+                <div class="flex items-center gap-1.5">
+                  <span class="font-bold text-white truncate">${q.user.name}</span>
+                  ${isMe ? '<span class="text-[9px] bg-amber-500/30 text-amber-200 px-1.5 py-0.5 rounded-full font-bold flex-shrink-0">我</span>' : ''}
+                  ${idx === 0 ? '<span class="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-full flex-shrink-0">下一位</span>' : ''}
+                </div>
+                <span class="text-slate-400 font-mono-num text-[11px]">${q.user.phone}</span>
                 <div class="text-[10px] text-slate-400">預計充至: ${q.expectedEndTime} ${q.note ? '· ' + q.note : ''}</div>
               </div>
             </div>
-            ${isAdmin ? `<button onclick="adminRemoveQueueItem('${spotId}', ${idx})" class="text-rose-400 hover:text-rose-300 text-xs px-2 py-1"><i class="fa-solid fa-trash-can"></i> 移除</button>` : ''}
+            <div class="flex items-center gap-1.5 flex-shrink-0 ml-2">
+              ${isMe ? `<button onclick="cancelMyQueue('${spotId}', ${idx})" class="px-2 py-1 bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 rounded text-[11px] font-bold transition">
+                <i class="fa-solid fa-xmark"></i> 取消排隊
+              </button>` : ''}
+              ${isAdmin && !isMe ? `<button onclick="adminRemoveQueueItem('${spotId}', ${idx})" class="px-2 py-1 bg-slate-700 hover:bg-rose-600/40 text-rose-400 rounded text-[11px] transition" title="管理員移除">
+                <i class="fa-solid fa-trash-can"></i>
+              </button>` : ''}
+            </div>
           `;
           queueList.appendChild(item);
         });
@@ -1903,10 +1917,36 @@
     }
 
     function adminRemoveQueueItem(spotId, idx) {
-      if (!confirm('確定要從排隊候補清單中移除此車主嗎？')) return;
+      const target = spotsState[spotId].queue[idx];
+      if (!confirm(`確定要將【${target.user.name}】從此車位的排隊名單中移除嗎？\n(後方排隊者會自動往前遞補順位)`)) return;
       spotsState[spotId].queue.splice(idx, 1);
       saveSpots();
       openSpotAction(spotId);
+      showToast(`已移除 ${target.user.name}，後方順位已自動遞補`);
+    }
+
+    // Allow a queued user to cancel their own reservation (auto shifts others forward)
+    function cancelMyQueue(spotId, idx) {
+      const state = spotsState[spotId];
+      if (!state || !state.queue || !state.queue[idx]) return;
+
+      const target = state.queue[idx];
+      if (!currentUser || target.user.phone !== currentUser.phone) {
+        alert('您只能取消自己的排隊登記！');
+        return;
+      }
+
+      if (!confirm(`確定要取消您在車位【${spotId}】的排隊登記嗎？\n取消後，後方排隊的同仁會自動往前遞補順位。`)) return;
+
+      state.queue.splice(idx, 1);
+      saveSpots();
+      openSpotAction(spotId);
+
+      if (state.queue.length > 0) {
+        showToast(`已取消排隊！${state.queue[0].user.name} 已遞補為下一位`);
+      } else {
+        showToast(`已成功取消您在 ${spotId} 的排隊登記`);
+      }
     }
 
     // --- Admin User Management Functions ---
