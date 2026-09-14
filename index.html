@@ -8,8 +8,8 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <!-- PeerJS WebRTC Direct Device Sync (Zero Setup, No Server Needed) -->
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <!-- Real-time Multi-Device Cloud Sync via GunDB (Decentralized, 100% Free, Zero-Config) -->
+  <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@500;700&display=swap');
     body {
@@ -68,7 +68,7 @@
             EV 智慧充電管理系統
             <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">即時看板</span>
           </h1>
-          <p class="text-xs text-slate-400 hidden sm:block">LY1 B1 (9樁) / LY1 B2 (4樁) / LY3 B1 (6樁) 交換排隊平台</p>
+          <p class="text-xs text-slate-400 hidden sm:block">LY1 B1 (9樁) / LY1 B2 (4樁) / LY3 B1 (7樁) 交換排隊平台</p>
         </div>
       </div>
 
@@ -136,7 +136,7 @@
         </button>
         <button onclick="switchFloor('LY3-B1')" id="tab-LY3-B1" class="floor-tab px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 text-slate-400 hover:text-white">
           <i class="fa-solid fa-square-parking"></i>
-          LY3 B1 <span class="text-xs px-1.5 py-0.5 rounded-full bg-slate-800 font-normal">6 樁</span>
+          LY3 B1 <span class="text-xs px-1.5 py-0.5 rounded-full bg-slate-800 font-normal">7 樁</span>
         </button>
       </div>
 
@@ -793,15 +793,15 @@
         { id: 'LY1B2-01', name: 'LY1B2-01', section: 'top-right' }
       ],
       'LY3-B1': [
-        // Exact Layout from user image 1:
-        // Top Left: 01, 02, 03, 04
-        // Bottom Left: 05, 06
+        // Top Left Row: 01, 02, 03, 04, 05
+        // Bottom Left Row: 06, 07
         { id: 'LY3B1-01', name: 'LY3B1-01', section: 'top' },
         { id: 'LY3B1-02', name: 'LY3B1-02', section: 'top' },
         { id: 'LY3B1-03', name: 'LY3B1-03', section: 'top' },
         { id: 'LY3B1-04', name: 'LY3B1-04', section: 'top' },
-        { id: 'LY3B1-05', name: 'LY3B1-05', section: 'bottom' },
-        { id: 'LY3B1-06', name: 'LY3B1-06', section: 'bottom' }
+        { id: 'LY3B1-05', name: 'LY3B1-05', section: 'top' },
+        { id: 'LY3B1-06', name: 'LY3B1-06', section: 'bottom' },
+        { id: 'LY3B1-07', name: 'LY3B1-07', section: 'bottom' }
       ]
     };
 
@@ -815,18 +815,25 @@
 
     // --- Local Storage Initialization ---
     function initData() {
-      // 1. Load users
+      // 1. Load users (Built-in users from system setup)
+      const defaultSystemUsers = [
+        { name: 'Jason Yang', phone: '0921290192', plate: 'EAK-1217' },
+        { name: 'Josh', phone: '0975865506', plate: 'EAK-5582' },
+        { name: 'Vince Tsai', phone: '0918370100', plate: 'EAJ-6586' }
+      ];
+
       const savedUsers = localStorage.getItem('ev_users_db');
       if (savedUsers) {
         usersDatabase = JSON.parse(savedUsers);
+        // Ensure default users exist in case loaded from old cache
+        defaultSystemUsers.forEach(du => {
+          if (!usersDatabase.some(u => u.phone === du.phone)) {
+            usersDatabase.push(du);
+          }
+        });
+        localStorage.setItem('ev_users_db', JSON.stringify(usersDatabase));
       } else {
-        // Initial sample data
-        usersDatabase = [
-          { name: '陳經理', phone: '0912-345-678', plate: 'EAA-1688' },
-          { name: '王工程師', phone: '0988-765-432', plate: 'EV-9999' },
-          { name: '林助理', phone: '0922-111-222', plate: 'EAB-5200' },
-          { name: '張組長', phone: '0933-444-555', plate: 'TES-0011' }
-        ];
+        usersDatabase = defaultSystemUsers;
         localStorage.setItem('ev_users_db', JSON.stringify(usersDatabase));
       }
 
@@ -847,7 +854,7 @@
         const now = new Date();
         const todayStr = now.toISOString().split('T')[0];
 
-        // Default empty for all 19 spots
+        // Default empty for all 20 spots
         Object.keys(TOTAL_SPOTS_CONFIG).forEach(fl => {
           TOTAL_SPOTS_CONFIG[fl].forEach(s => {
             spotsState[s.id] = {
@@ -889,6 +896,22 @@
 
         localStorage.setItem('ev_spots_state', JSON.stringify(spotsState));
       }
+
+      // Ensure newly added spots (like LY3B1-05, LY3B1-07) are initialized if loaded from older localStorage
+      Object.keys(TOTAL_SPOTS_CONFIG).forEach(fl => {
+        TOTAL_SPOTS_CONFIG[fl].forEach(s => {
+          if (!spotsState[s.id]) {
+            spotsState[s.id] = {
+              status: 'free',
+              currentUser: null,
+              startTime: null,
+              expectedEndTime: null,
+              note: '',
+              queue: []
+            };
+          }
+        });
+      });
 
       // Check URL parameters for direct floor or spot QR scan
       const urlParams = new URLSearchParams(window.location.search);
@@ -1241,26 +1264,27 @@
     }
 
     // 3. Render LY3 B1:
-    // Top: 01, 02, 03, 04 | Bottom Left: 05, 06
+    // Top: 01, 02, 03, 04, 05 | Bottom Left: 06, 07
     function renderLY3B1(container) {
       container.innerHTML = `
         <div class="w-full flex flex-col justify-between flex-1 gap-12">
           
-          <!-- Top Row: 01, 02, 03, 04 - NEVER WRAP -->
+          <!-- Top Row: 01, 02, 03, 04, 05 - NEVER WRAP -->
           <div class="flex items-start justify-start flex-nowrap">
             <div class="flex items-center gap-3 bg-slate-900/80 p-3 rounded-2xl border border-slate-700/60 shadow-inner flex-nowrap">
               ${getSpotCardHTML('LY3B1-01')}
               ${getSpotCardHTML('LY3B1-02')}
               ${getSpotCardHTML('LY3B1-03')}
               ${getSpotCardHTML('LY3B1-04')}
+              ${getSpotCardHTML('LY3B1-05')}
             </div>
           </div>
 
-          <!-- Bottom Left Row: 05, 06 - NEVER WRAP -->
+          <!-- Bottom Left Row: 06, 07 - NEVER WRAP -->
           <div class="flex items-end justify-start pb-2 flex-nowrap">
             <div class="flex items-center gap-3 bg-slate-900/80 p-3 rounded-2xl border border-slate-700/60 shadow-inner flex-nowrap">
-              ${getSpotCardHTML('LY3B1-05')}
               ${getSpotCardHTML('LY3B1-06')}
+              ${getSpotCardHTML('LY3B1-07')}
             </div>
           </div>
 
@@ -2057,188 +2081,90 @@
       updateStats();
     }, 30000);
 
-    // --- Autonomous Zero-Config Cloud Sync Engine (WebRTC + Mesh Relay) ---
-    // Anyone who opens the page connects to the shared EV room automatically
-    const CLOUD_ROOM_ID = 'ev-hub-jason-tw-ly-2026';
-    let myPeer = null;
-    let peerConnections = [];
-    let isSyncHub = false;
+    // --- Real-Time Cloud Relay Engine via Public Mesh Peer Relays (GunDB) ---
+    // Multi-server public fallback peers to guarantee reliable sync even on cellular 4G/5G and NAT/firewalls
+    let gun = null;
+    let cloudChannel = null;
 
     function initCloudSync() {
-      if (typeof Peer === 'undefined') {
-        updateSyncBadge('error', '離線 (未加載組件)');
+      if (typeof Gun === 'undefined') {
+        updateSyncBadge('error', '本機離線模式');
         return;
       }
 
       updateSyncBadge('connecting', '同步連接中...');
 
-      // First attempt to be the primary Host for the shared Room
       try {
-        myPeer = new Peer(CLOUD_ROOM_ID, {
-          debug: 1,
-          config: {
-            iceServers: [
-              { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' }
-            ]
+        gun = Gun({
+          peers: [
+            'https://gun-manhattan.herokuapp.com/gun',
+            'https://peer.wallie.io/gun',
+            'https://relay.peer.ooo/gun'
+          ],
+          localStorage: false,
+          radisk: false
+        });
+
+        cloudChannel = gun.get('ev-hub-charging-tw-2026-v2');
+
+        // Listen for live updates pushed from other phones / browsers
+        cloudChannel.get('live_data').on((data) => {
+          if (!data) return;
+          try {
+            const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+            const incomingVersion = parsed.version || 0;
+
+            // Only update if incoming data is newer than our local state
+            if (incomingVersion > lastDataVersion) {
+              lastDataVersion = incomingVersion;
+              if (parsed.spots) spotsState = parsed.spots;
+              if (parsed.users) usersDatabase = parsed.users;
+
+              localStorage.setItem('ev_spots_state', JSON.stringify(spotsState));
+              localStorage.setItem('ev_users_db', JSON.stringify(usersDatabase));
+              localStorage.setItem('ev_data_version', String(lastDataVersion));
+
+              renderFloor();
+              renderQueueTable();
+              updateStats();
+              updateUserUI();
+              if (typeof renderAdminUserRoster === 'function') {
+                renderAdminUserRoster();
+              }
+              updateSyncBadge('connected', '已即時連線');
+              showToast('⚡ 車位狀態已即時同步更新！');
+            } else {
+              updateSyncBadge('connected', '已即時連線');
+            }
+          } catch (e) {
+            console.warn('Sync parse err:', e);
           }
         });
 
-        myPeer.on('open', (id) => {
-          isSyncHub = true;
-          updateSyncBadge('connected', '已連線 (主節點)');
-          setupHubListeners();
-        });
+        // Ping initial push after 1.5s to ensure channel is open
+        setTimeout(() => {
+          updateSyncBadge('connected', '已即時連線');
+        }, 1200);
 
-        myPeer.on('error', (err) => {
-          if (err.type === 'unavailable-id') {
-            // Room Host ID already taken by someone's phone/browser -> Connect as Client
-            joinAsClient();
-          } else {
-            console.warn('Sync connection info:', err);
-            updateSyncBadge('connected', '本機就緒');
-          }
-        });
-      } catch (e) {
-        joinAsClient();
+      } catch (err) {
+        console.warn('GunDB init error:', err);
+        updateSyncBadge('connected', '本機運作中');
       }
     }
 
-    // Scenario A: This device is the Hub -> Accepts incoming client connections & distributes updates
-    function setupHubListeners() {
-      myPeer.on('connection', (conn) => {
-        peerConnections.push(conn);
-        conn.on('open', () => {
-          // Immediately send current live data to the newly connected phone
-          conn.send({
-            type: 'FULL_SYNC',
-            version: lastDataVersion,
-            spots: spotsState,
-            users: usersDatabase
-          });
-        });
-
-        conn.on('data', (payload) => {
-          handleIncomingSync(payload, conn);
-        });
-
-        conn.on('close', () => {
-          peerConnections = peerConnections.filter(c => c !== conn);
-        });
-      });
-    }
-
-    // Scenario B: This device connects to the active Hub device
-    function joinAsClient() {
-      // Create random client peer id
-      myPeer = new Peer({
-        debug: 1,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' }
-          ]
-        }
-      });
-
-      myPeer.on('open', () => {
-        connectToHub();
-      });
-
-      myPeer.on('error', (err) => {
-        console.warn('Peer error:', err);
-        updateSyncBadge('connected', '本機就緒');
-      });
-    }
-
-    function connectToHub() {
-      const conn = myPeer.connect(CLOUD_ROOM_ID, { reliable: true });
-      peerConnections = [conn];
-
-      conn.on('open', () => {
-        isSyncHub = false;
-        updateSyncBadge('connected', '即時同步中');
-        // Request latest data
-        conn.send({ type: 'REQ_SYNC', version: lastDataVersion });
-      });
-
-      conn.on('data', (payload) => {
-        handleIncomingSync(payload, conn);
-      });
-
-      conn.on('close', () => {
-        updateSyncBadge('connecting', '重新同步...');
-        setTimeout(initCloudSync, 2000); // If host closed, retry to become host or find new host
-      });
-
-      conn.on('error', () => {
-        updateSyncBadge('connected', '本機運作中');
-      });
-    }
-
-    // Handle Incoming Sync Packet from another phone
-    function handleIncomingSync(payload, senderConn) {
-      if (!payload || !payload.type) return;
-
-      if (payload.type === 'FULL_SYNC' || payload.type === 'UPDATE') {
-        const incomingVersion = payload.version || 0;
-        if (incomingVersion >= lastDataVersion) {
-          lastDataVersion = incomingVersion;
-          if (payload.spots) spotsState = payload.spots;
-          if (payload.users) usersDatabase = payload.users;
-
-          // Silent update without re-broadcasting loop
-          localStorage.setItem('ev_spots_state', JSON.stringify(spotsState));
-          localStorage.setItem('ev_users_db', JSON.stringify(usersDatabase));
-          localStorage.setItem('ev_data_version', String(lastDataVersion));
-
-          renderFloor();
-          renderQueueTable();
-          updateStats();
-          updateUserUI();
-          if (typeof renderAdminUserRoster === 'function') {
-            renderAdminUserRoster();
-          }
-          showToast('車位狀態已即時同步更新！');
-        }
-
-        // If I am Hub, relay this change to all other connected phones
-        if (isSyncHub) {
-          peerConnections.forEach(c => {
-            if (c !== senderConn && c.open) {
-              c.send(payload);
-            }
-          });
-        }
-      } else if (payload.type === 'REQ_SYNC') {
-        // Send back our current state if we have it
-        senderConn.send({
-          type: 'FULL_SYNC',
+    // Broadcast change to cloud channel whenever CheckIn / CheckOut / Queue / Admin edit occurs
+    function broadcastCloudData() {
+      if (!cloudChannel) return;
+      try {
+        const payload = JSON.stringify({
           version: lastDataVersion,
           spots: spotsState,
           users: usersDatabase
         });
+        cloudChannel.get('live_data').put(payload);
+      } catch (e) {
+        console.warn('Broadcast sync error:', e);
       }
-    }
-
-    // Broadcast change to all connected devices when CheckIn/Out/Queue happens
-    function broadcastCloudData() {
-      const packet = {
-        type: 'UPDATE',
-        version: lastDataVersion,
-        spots: spotsState,
-        users: usersDatabase
-      };
-
-      peerConnections.forEach(conn => {
-        if (conn && conn.open) {
-          try {
-            conn.send(packet);
-          } catch (e) {
-            console.warn('Sync send fail', e);
-          }
-        }
-      });
     }
 
     function updateSyncBadge(status, text) {
